@@ -74,7 +74,7 @@ public sealed class AppController : IDisposable
     public async Task StartAsync()
     {
         Log.Info("Starting Jira TaskBar");
-        if (!Settings.IsConfigured || string.IsNullOrEmpty(_secrets.LoadToken()))
+        if (!Settings.IsConfigured || string.IsNullOrEmpty(_secrets.LoadToken()) || TrySite() is null)
         {
             if (!ShowSettingsDialog(firstRun: true))
             {
@@ -117,10 +117,24 @@ public sealed class AppController : IDisposable
         _priorities = null;
 
         var token = _secrets.LoadToken();
-        if (!Settings.IsConfigured || string.IsNullOrEmpty(token)) return;
+        if (!Settings.IsConfigured || string.IsNullOrEmpty(token) || TrySite() is not { } site) return;
 
-        _http = new HttpClient();
-        Client = new JiraClient(_http, new JiraConnection(JiraConnection.NormalizeSiteUrl(Settings.SiteUrl), Settings.Email, token));
+        _http = JiraClient.CreateHttpClient();
+        Client = new JiraClient(_http, new JiraConnection(site, Settings.Email, token));
+    }
+
+    /// <summary>The configured site, or null if it isn't an https Jira Cloud site (the token is never sent to it then).</summary>
+    private Uri? TrySite()
+    {
+        try
+        {
+            return JiraConnection.NormalizeSiteUrl(Settings.SiteUrl);
+        }
+        catch (ArgumentException ex)
+        {
+            Log.Error($"Ignoring saved Jira site '{Settings.SiteUrl}': {ex.Message}");
+            return null;
+        }
     }
 
     public async Task<IReadOnlyList<JiraIssue>> FetchIssuesAsync()
@@ -134,8 +148,8 @@ public sealed class AppController : IDisposable
 
     public void OpenInBrowser(string key)
     {
-        if (!Settings.IsConfigured) return;
-        Shell.Open(new JiraConnection(JiraConnection.NormalizeSiteUrl(Settings.SiteUrl), Settings.Email, string.Empty).BrowseUrl(key));
+        if (TrySite() is not { } site) return;
+        Shell.OpenUrl(new JiraConnection(site, Settings.Email, string.Empty).BrowseUrl(key));
     }
 
     public void OpenCommentEditor(TicketViewModel ticket)
@@ -377,7 +391,7 @@ public sealed class AppController : IDisposable
         startup.IsChecked = Settings.StartWithWindows;
         menu.Items.Add(startup);
 
-        menu.Items.Add(Item("Open data folder", null, () => Shell.Open(AppPaths.DataDirectory)));
+        menu.Items.Add(Item("Open data folder", null, () => Shell.OpenFolder(AppPaths.DataDirectory)));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Exit", SymbolRegular.Power24, () => _ = ExitAsync()));
     }

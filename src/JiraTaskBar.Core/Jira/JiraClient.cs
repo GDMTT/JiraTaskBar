@@ -11,7 +11,7 @@ public interface IJiraClient
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
     Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
-    Task AddCommentAsync(string issueKey, string wikiMarkup, bool? isInternal, CancellationToken ct = default);
+    Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default);
     /// <returns>The filename Jira stored the attachment under.</returns>
     Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default);
 }
@@ -24,8 +24,13 @@ public sealed class JiraClient : IJiraClient
 
     private readonly HttpClient _http;
 
+    /// <param name="http">Should come from <see cref="CreateHttpClient"/> so credentials never follow a redirect.</param>
     public JiraClient(HttpClient http, JiraConnection connection)
     {
+        // Defence in depth: never attach Basic credentials to a non-TLS request.
+        if (connection.SiteUrl.Scheme != Uri.UriSchemeHttps)
+            throw new ArgumentException("The Jira site must use https://.", nameof(connection));
+
         _http = http;
         Connection = connection;
         _http.BaseAddress = connection.SiteUrl;
@@ -37,6 +42,12 @@ public sealed class JiraClient : IJiraClient
     }
 
     public JiraConnection Connection { get; }
+
+    /// <summary>
+    /// An HttpClient that does not follow redirects. A redirect from the Jira API is unexpected,
+    /// and following it could carry the Authorization header to another host.
+    /// </summary>
+    public static HttpClient CreateHttpClient() => new(new SocketsHttpHandler { AllowAutoRedirect = false });
 
     public async Task<JiraUser> GetMyselfAsync(CancellationToken ct = default)
     {
@@ -85,7 +96,7 @@ public sealed class JiraClient : IJiraClient
         SendAsync(HttpMethod.Post, $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog",
             JiraPayloads.Worklog(startedLocal, timeSpentSeconds, comment), ct);
 
-    public Task AddCommentAsync(string issueKey, string wikiMarkup, bool? isInternal, CancellationToken ct = default) =>
+    public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Post, $"rest/api/2/issue/{Uri.EscapeDataString(issueKey)}/comment",
             JiraPayloads.Comment(wikiMarkup, isInternal), ct);
 
@@ -131,6 +142,7 @@ public sealed class JiraClient : IJiraClient
                 var status = (int)response.StatusCode;
                 var fallback = status switch
                 {
+                    >= 300 and < 400 => $"Jira redirected the request ({status}) – check the site address in Settings.",
                     401 => "Jira rejected the email or API token (401).",
                     403 => "You don't have permission for this action in Jira (403).",
                     404 => "Not found in Jira (404).",

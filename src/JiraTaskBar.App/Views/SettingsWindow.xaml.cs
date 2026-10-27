@@ -42,7 +42,7 @@ public partial class SettingsWindow : FluentWindow
     public string? NewToken { get; private set; }
 
     private void CreateToken_Click(object sender, RoutedEventArgs e) =>
-        Shell.Open("https://id.atlassian.com/manage-profile/security/api-tokens");
+        Shell.OpenUrl("https://id.atlassian.com/manage-profile/security/api-tokens");
 
     private async void Test_Click(object sender, RoutedEventArgs e) => await TestAsync();
 
@@ -81,9 +81,9 @@ public partial class SettingsWindow : FluentWindow
         {
             site = JiraConnection.NormalizeSiteUrl(SiteBox.Text);
         }
-        catch (Exception)
+        catch (ArgumentException ex)
         {
-            ShowStatus(InfoBarSeverity.Error, "Enter your Jira site, e.g. yourcompany.atlassian.net");
+            ShowStatus(InfoBarSeverity.Error, ex.Message);
             return TestOutcome.Invalid;
         }
 
@@ -99,7 +99,7 @@ public partial class SettingsWindow : FluentWindow
         ShowStatus(InfoBarSeverity.Informational, "Connecting…");
         try
         {
-            using var http = new HttpClient();
+            using var http = JiraClient.CreateHttpClient();
             var me = await new JiraClient(http, new JiraConnection(site, email, token)).GetMyselfAsync();
             ShowStatus(InfoBarSeverity.Success, $"Connected as {me.DisplayName}.");
             return TestOutcome.Ok;

@@ -31,23 +31,23 @@ public static class JiraPayloads
         return body;
     }
 
-    /// <summary>v2 comment body: wiki markup text, optionally flagged internal/public for service desk projects.</summary>
-    public static JsonObject Comment(string wikiMarkup, bool? isInternal)
+    /// <summary>
+    /// v2 comment body: wiki markup text plus the Service Management visibility flag.
+    /// The flag is always sent: a JSM comment without it is public (emailed to the customer),
+    /// so omitting it would fail open. Other project types ignore it.
+    /// </summary>
+    public static JsonObject Comment(string wikiMarkup, bool isInternal) => new()
     {
-        var body = new JsonObject { ["body"] = wikiMarkup };
-        if (isInternal is { } internalFlag)
+        ["body"] = wikiMarkup,
+        ["properties"] = new JsonArray
         {
-            body["properties"] = new JsonArray
+            new JsonObject
             {
-                new JsonObject
-                {
-                    ["key"] = ServiceDeskCommentProperty,
-                    ["value"] = new JsonObject { ["internal"] = internalFlag },
-                },
-            };
-        }
-        return body;
-    }
+                ["key"] = ServiceDeskCommentProperty,
+                ["value"] = new JsonObject { ["internal"] = isInternal },
+            },
+        },
+    };
 
     /// <summary>Minimal Atlassian Document Format document: one paragraph per line.</summary>
     public static JsonObject PlainTextAdf(string text)

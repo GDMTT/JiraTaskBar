@@ -111,14 +111,14 @@ public class JiraClientTests
     }
 
     [Fact]
-    public async Task Regular_comment_has_no_properties()
+    public void Comment_payload_always_carries_the_visibility_flag()
     {
-        var (client, handler) = Create();
-        handler.Respond("{}", HttpStatusCode.Created);
+        // A JSM comment without sd.public.comment is public, so the flag must never be omitted.
+        var body = JiraPayloads.Comment("hello", isInternal: true);
 
-        await client.AddCommentAsync("ABC-1", "hello", null);
-
-        Assert.Null(JsonNode.Parse(handler.Requests.Single().Body!)!["properties"]);
+        var prop = Assert.Single(body["properties"]!.AsArray())!;
+        Assert.Equal("sd.public.comment", prop["key"]!.GetValue<string>());
+        Assert.True(prop["value"]!["internal"]!.GetValue<bool>());
     }
 
     [Fact]
@@ -144,7 +144,7 @@ public class JiraClientTests
         var (client, handler) = Create();
         handler.Respond("""{"errorMessages":["Issue does not exist"],"errors":{}}""", HttpStatusCode.NotFound);
 
-        var ex = await Assert.ThrowsAsync<JiraApiException>(() => client.AddCommentAsync("NOPE-1", "x", null));
+        var ex = await Assert.ThrowsAsync<JiraApiException>(() => client.AddCommentAsync("NOPE-1", "x", true));
 
         Assert.Equal(404, ex.StatusCode);
         Assert.Equal("Issue does not exist", ex.Message);
@@ -153,10 +153,44 @@ public class JiraClientTests
     [Theory]
     [InlineData("acme", "https://acme.atlassian.net/")]
     [InlineData("acme.atlassian.net", "https://acme.atlassian.net/")]
-    [InlineData("https://acme.atlassian.net/jira/software/projects", "https://acme.atlassian.net/")]
-    [InlineData(" https://jira.example.com/ ", "https://jira.example.com/")]
+    [InlineData(" ACME.Atlassian.net/ ", "https://acme.atlassian.net/")]
+    [InlineData("https://acme.atlassian.net/jira/software/projects?x=1", "https://acme.atlassian.net/")]
     public void Normalizes_site_url(string input, string expected)
     {
         Assert.Equal(expected, JiraConnection.NormalizeSiteUrl(input).ToString());
+    }
+
+    [Theory]
+    [InlineData("http://acme.atlassian.net")]              // cleartext would expose the token
+    [InlineData("https://jira.example.com")]               // not Jira Cloud
+    [InlineData("https://acme.atlassian.net.evil.test")]   // look-alike suffix
+    [InlineData("https://evilatlassian.net")]              // no subdomain boundary
+    [InlineData("https://a.b.atlassian.net")]              // nested subdomain
+    [InlineData("https://acme.atlassian.net:8443")]        // non-default port
+    [InlineData("https://user:pw@acme.atlassian.net")]     // embedded credentials
+    [InlineData("ftp://acme.atlassian.net")]
+    [InlineData("")]
+    public void Rejects_unsafe_site_urls(string input)
+    {
+        Assert.Throws<ArgumentException>(() => JiraConnection.NormalizeSiteUrl(input));
+    }
+
+    [Fact]
+    public void Client_refuses_non_https_connection()
+    {
+        Assert.Throws<ArgumentException>(() => new JiraClient(new HttpClient(new FakeHandler()),
+            new JiraConnection(new Uri("http://acme.atlassian.net/"), "me@acme.com", "secret")));
+    }
+
+    [Fact]
+    public async Task Redirects_are_errors_not_followed()
+    {
+        var (client, handler) = Create();
+        handler.Respond("", HttpStatusCode.Found);
+
+        var ex = await Assert.ThrowsAsync<JiraApiException>(() => client.GetMyselfAsync());
+
+        Assert.Equal(302, ex.StatusCode);
+        Assert.Single(handler.Requests);
     }
 }

@@ -66,7 +66,9 @@ public partial class CommentWindow : FluentWindow
         IssueKeyText.Text = issue.Key;
         IssueSummaryText.Text = issue.Summary;
         IssueSummaryText.ToolTip = issue.Summary;
-        VisibilityPanel.Visibility = issue.IsServiceDesk ? Visibility.Visible : Visibility.Collapsed;
+        // Offer the internal/public choice for service desk tickets, and also when the project type
+        // is unknown (e.g. a ticket that left the query) – it defaults to Internal either way.
+        VisibilityPanel.Visibility = ShowsVisibilityChoice ? Visibility.Visible : Visibility.Collapsed;
         AttachmentList.ItemsSource = _attachments;
 
         CommandBindings.Add(new CommandBinding(PostCommand, async (_, _) => await PostAsync()));
@@ -79,6 +81,8 @@ public partial class CommentWindow : FluentWindow
         BuildTablePicker();
         Loaded += (_, _) => Editor.Focus();
     }
+
+    private bool ShowsVisibilityChoice => _issue.IsServiceDesk || string.IsNullOrEmpty(_issue.ProjectTypeKey);
 
     /// <summary>Shows the window beside the bar, on the side with the most room.</summary>
     public void ShowNextTo(IntPtr barHwnd)
@@ -398,12 +402,13 @@ public partial class CommentWindow : FluentWindow
                 {
                     if (args.Uri.StartsWith($"https://{PreviewHost}/", StringComparison.OrdinalIgnoreCase)) return;
                     args.Cancel = true;
-                    if (args.Uri.StartsWith("http", StringComparison.OrdinalIgnoreCase)) Shell.Open(args.Uri);
+                    Shell.OpenUrl(args.Uri);
                 };
+                // Ctrl/middle-click: never open a WebView window; hand web links to the browser, refuse the rest.
                 PreviewView.CoreWebView2.NewWindowRequested += (_, args) =>
                 {
                     args.Handled = true;
-                    Shell.Open(args.Uri);
+                    Shell.OpenUrl(args.Uri);
                 };
                 _previewReady = true;
             }
@@ -464,7 +469,8 @@ public partial class CommentWindow : FluentWindow
             }
 
             ShowInfo("Posting comment…");
-            bool? isInternal = _issue.IsServiceDesk ? InternalRadio.IsChecked == true : null;
+            // Only an explicit "Reply to customer" choice makes a comment public.
+            var isInternal = !ShowsVisibilityChoice || PublicRadio.IsChecked != true;
             await _client.AddCommentAsync(_issue.Key, text, isInternal);
             Log.Info($"Comment posted to {_issue.Key} (internal={isInternal})");
 
