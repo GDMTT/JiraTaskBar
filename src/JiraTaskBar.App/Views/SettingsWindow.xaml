@@ -1,0 +1,80 @@
+<ui:FluentWindow x:Class="JiraTaskBar.App.Views.SettingsWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="Jira TaskBar – Settings"
+                 Width="560" SizeToContent="Height"
+                 ResizeMode="NoResize"
+                 WindowStartupLocation="CenterScreen"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica"
+                 WindowCornerPreference="Round">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Title="Jira TaskBar – Settings" ShowMaximize="False" ShowMinimize="False" />
+
+        <StackPanel Grid.Row="1" Margin="20,8,20,20">
+            <TextBlock x:Name="IntroText" TextWrapping="Wrap" Opacity="0.8" Margin="0,0,0,12"
+                       Text="Connect to Jira Cloud with your Atlassian account email and an API token." />
+
+            <TextBlock Text="Jira site" FontWeight="SemiBold" />
+            <ui:TextBox x:Name="SiteBox" Margin="0,4,0,10" PlaceholderText="yourcompany.atlassian.net" />
+
+            <TextBlock Text="Email" FontWeight="SemiBold" />
+            <ui:TextBox x:Name="EmailBox" Margin="0,4,0,10" PlaceholderText="you@company.com" />
+
+            <DockPanel>
+                <TextBlock Text="API token" FontWeight="SemiBold" />
+                <TextBlock HorizontalAlignment="Right">
+                    <Hyperlink Click="CreateToken_Click">Create an API token…</Hyperlink>
+                </TextBlock>
+            </DockPanel>
+            <PasswordBox x:Name="TokenBox" Margin="0,4,0,2" />
+            <TextBlock x:Name="TokenHint" FontSize="11" Opacity="0.65" Margin="0,0,0,10"
+                       Text="Stored encrypted for your Windows account (DPAPI). Leave blank to keep the saved token." />
+
+            <TextBlock Text="Tickets to show (JQL)" FontWeight="SemiBold" />
+            <ui:TextBox x:Name="JqlBox" Margin="0,4,0,2" AcceptsReturn="True" TextWrapping="Wrap" MinLines="2"
+                        FontFamily="Consolas" />
+            <TextBlock FontSize="11" Opacity="0.65" Margin="0,0,0,10" TextWrapping="Wrap"
+                       Text="Buttons are always ordered by priority (highest first), then by key." />
+
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="16" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Refresh every (minutes)" FontWeight="SemiBold" />
+                    <ui:NumberBox x:Name="RefreshBox" Margin="0,4,0,0" Minimum="1" Maximum="120" SmallChange="1" MaxDecimalPlaces="0" />
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="Ask about time away after (minutes)" FontWeight="SemiBold" />
+                    <ui:NumberBox x:Name="IdleBox" Margin="0,4,0,0" Minimum="0" Maximum="480" SmallChange="5" MaxDecimalPlaces="0"
+                                  ToolTip="When the PC was locked or asleep this long while a timer ran, ask whether to keep that time. 0 = never ask." />
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Text="Sessions shorter than one minute" FontWeight="SemiBold" />
+            <ComboBox x:Name="ShortSessionBox" Margin="0,4,0,10">
+                <ComboBoxItem Content="Log as 1 minute" />
+                <ComboBoxItem Content="Don't log" />
+            </ComboBox>
+
+            <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,12" />
+
+            <ui:InfoBar x:Name="Status" IsClosable="False" IsOpen="False" Margin="0,0,0,12" />
+
+            <DockPanel LastChildFill="False">
+                <ui:Button x:Name="TestButton" Content="Test connection" Click="Test_Click" DockPanel.Dock="Left" />
+                <ui:Button Content="Cancel" Click="Cancel_Click" DockPanel.Dock="Right" Margin="8,0,0,0" />
+                <ui:Button x:Name="SaveButton" Content="Save" Appearance="Primary" Click="Save_Click" DockPanel.Dock="Right" IsDefault="True" />
+            </DockPanel>
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>
