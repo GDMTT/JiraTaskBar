@@ -60,7 +60,8 @@
                         <Border Width="4" Margin="0,1,7,1" CornerRadius="2" Background="{Binding PriorityBrush}" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock Text="{Binding Key}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding SubtitleText}" FontSize="11" Opacity="0.8" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding SubtitleText}" FontSize="11" Opacity="0.8" TextTrimming="CharacterEllipsis"
+                                       Visibility="{Binding HasSubtitle, Converter={StaticResource BoolToVisibility}}" />
                         </StackPanel>
                     </Grid>
                 </ui:Button>

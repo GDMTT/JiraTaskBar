@@ -120,6 +120,13 @@ public static class NativeMethods
 
     [DllImport("dwmapi.dll")]
     public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    public const uint WDA_NONE = 0x00;
+    /// <summary>Window is visible on the monitor but omitted from captures (Windows 10 2004+).</summary>
+    public const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint affinity);
 }
 
 /// <summary>Monitor geometry in physical pixels.</summary>

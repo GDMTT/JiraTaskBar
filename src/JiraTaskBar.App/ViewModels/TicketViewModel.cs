@@ -20,13 +20,17 @@ public sealed partial class TicketViewModel : ObservableObject
     private readonly Action<TicketViewModel> _toggle;
     private readonly Action<TicketViewModel> _open;
     private readonly Action<TicketViewModel> _comment;
+    private readonly Func<bool> _showTitles;
 
-    public TicketViewModel(JiraIssue issue, Action<TicketViewModel> toggle, Action<TicketViewModel> open, Action<TicketViewModel> comment)
+    /// <param name="showTitles">Whether the summary appears on the button (it is always in the tooltip).</param>
+    public TicketViewModel(JiraIssue issue, Action<TicketViewModel> toggle, Action<TicketViewModel> open,
+        Action<TicketViewModel> comment, Func<bool>? showTitles = null)
     {
         _issue = issue;
         _toggle = toggle;
         _open = open;
         _comment = comment;
+        _showTitles = showTitles ?? (() => true);
     }
 
     public static JiraIssue Placeholder(string key) => new(key, "(not in the current ticket query)", null, string.Empty, string.Empty, string.Empty);
@@ -34,18 +38,18 @@ public sealed partial class TicketViewModel : ObservableObject
     public string Key => Issue.Key;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(Summary), nameof(PriorityLabel), nameof(PriorityBrush), nameof(MetaLine))]
+    [NotifyPropertyChangedFor(nameof(Summary), nameof(PriorityLabel), nameof(PriorityBrush), nameof(MetaLine), nameof(SubtitleText), nameof(HasSubtitle))]
     private JiraIssue _issue;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SubtitleText))]
+    [NotifyPropertyChangedFor(nameof(SubtitleText), nameof(HasSubtitle))]
     private bool _isActive;
 
     [ObservableProperty]
     private bool _isStale;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SubtitleText))]
+    [NotifyPropertyChangedFor(nameof(SubtitleText), nameof(HasSubtitle))]
     private string _elapsedText = string.Empty;
 
     public string Summary => Issue.Summary;
@@ -58,8 +62,17 @@ public sealed partial class TicketViewModel : ObservableObject
     public string MetaLine => string.Join(" · ",
         new[] { Issue.IssueType, PriorityLabel, Issue.Status }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
-    /// <summary>Second line on the button: running time when active, otherwise the summary.</summary>
-    public string SubtitleText => IsActive ? "● " + ElapsedText : Summary;
+    /// <summary>Second line on the button: running time when active, otherwise the summary (if titles are shown).</summary>
+    public string SubtitleText => IsActive ? "● " + ElapsedText : _showTitles() ? Summary : string.Empty;
+
+    public bool HasSubtitle => SubtitleText.Length > 0;
+
+    /// <summary>Call after the show-titles setting changes.</summary>
+    public void RefreshSubtitle()
+    {
+        OnPropertyChanged(nameof(SubtitleText));
+        OnPropertyChanged(nameof(HasSubtitle));
+    }
 
     [RelayCommand]
     private void Toggle() => _toggle(this);

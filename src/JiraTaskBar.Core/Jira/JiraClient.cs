@@ -33,13 +33,14 @@ public sealed class JiraClient : IJiraClient
     public JiraClient(HttpClient http, JiraConnection connection, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         // Defence in depth: never attach Basic credentials to a non-TLS request.
-        if (connection.SiteUrl.Scheme != Uri.UriSchemeHttps)
+        var baseUrl = connection.ApiBaseUrl;
+        if (baseUrl.Scheme != Uri.UriSchemeHttps)
             throw new ArgumentException("The Jira site must use https://.", nameof(connection));
 
         _http = http;
         _delay = delay ?? Task.Delay;
         Connection = connection;
-        _http.BaseAddress = connection.SiteUrl;
+        _http.BaseAddress = baseUrl;
         var raw = Encoding.UTF8.GetBytes($"{connection.Email}:{connection.ApiToken}");
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(raw));
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -54,6 +55,29 @@ public sealed class JiraClient : IJiraClient
     /// and following it could carry the Authorization header to another host.
     /// </summary>
     public static HttpClient CreateHttpClient() => new(new SocketsHttpHandler { AllowAutoRedirect = false });
+
+    /// <summary>
+    /// Looks up a site's cloud ID (needed for scoped tokens) from <c>/_edge/tenant_info</c>.
+    /// Sent without credentials. The endpoint isn't a documented API, so failure returns null
+    /// and the user can paste the ID from admin.atlassian.com instead.
+    /// </summary>
+    /// <param name="http">A client with no default Authorization header.</param>
+    public static async Task<string?> TryGetCloudIdAsync(HttpClient http, Uri site, CancellationToken ct = default)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(site, "/_edge/tenant_info"));
+            using var response = await http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return null;
+            var id = JsonNode.Parse(await response.Content.ReadAsStringAsync(ct))?["cloudId"]?.GetValue<string>();
+            return id is null ? null : JiraConnection.NormalizeCloudId(id);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                       or System.Text.Json.JsonException or InvalidOperationException or ArgumentException)
+        {
+            return null;
+        }
+    }
 
     public async Task<JiraUser> GetMyselfAsync(CancellationToken ct = default)
     {

@@ -35,6 +35,12 @@ public sealed class AppSettings
     public int IdlePromptMinutes { get; set; } = 10;
     public bool StartWithWindows { get; set; }
 
+    /// <summary>Exclude the bar (and its tooltips/menus) from screen sharing, screenshots and recordings.</summary>
+    public bool HideFromScreenCapture { get; set; } = true;
+
+    /// <summary>Show ticket summaries on the buttons; when off, only keys show (titles stay in tooltips).</summary>
+    public bool ShowTitlesOnBar { get; set; } = true;
+
     public DockEdge Dock { get; set; } = DockEdge.Floating;
     /// <summary>Device name of the monitor the bar was last docked or floating on (e.g. \\.\DISPLAY1).</summary>
     public string? MonitorDevice { get; set; }

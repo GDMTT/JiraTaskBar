@@ -19,9 +19,32 @@ public sealed record JiraIssue(
 
 public sealed record JiraUser(string AccountId, string DisplayName, string? EmailAddress);
 
-public sealed record JiraConnection(Uri SiteUrl, string Email, string ApiToken)
+/// <param name="SiteUrl">The Jira site, used for browser links (and for REST calls with a classic token).</param>
+/// <param name="CloudId">
+/// Set for a <b>scoped</b> API token: REST calls then go through Atlassian's API gateway
+/// (<c>https://api.atlassian.com/ex/jira/{cloudId}/</c>), the only place scoped tokens are accepted.
+/// Null for a classic token, which is used against the site URL.
+/// </param>
+public sealed record JiraConnection(Uri SiteUrl, string Email, string ApiToken, string? CloudId = null)
 {
+    /// <summary>The minimum classic scopes a scoped token needs for this app.</summary>
+    public const string RequiredScopes = "read:jira-work, write:jira-work, read:jira-user";
+
+    public const string GatewayHost = "api.atlassian.com";
+
+    public bool IsScoped => CloudId is not null;
+
+    /// <summary>Base address for REST calls: the API gateway for scoped tokens, otherwise the site.</summary>
+    public Uri ApiBaseUrl => CloudId is null ? SiteUrl : new Uri($"https://{GatewayHost}/ex/jira/{NormalizeCloudId(CloudId)}/");
+
     public Uri BrowseUrl(string issueKey) => new(SiteUrl, $"/browse/{Uri.EscapeDataString(issueKey)}");
+
+    /// <summary>Validates a cloud ID (a GUID) and returns it in canonical lower-case form.</summary>
+    /// <exception cref="ArgumentException">Not a GUID, so it could inject path segments into the gateway URL.</exception>
+    public static string NormalizeCloudId(string input) =>
+        Guid.TryParse((input ?? string.Empty).Trim(), out var id)
+            ? id.ToString("D")
+            : throw new ArgumentException("The cloud ID should look like 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d.", nameof(input));
 
     private const string CloudDomain = ".atlassian.net";
 

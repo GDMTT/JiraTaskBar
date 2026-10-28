@@ -13,6 +13,8 @@ A small always-on-top bar with one button per Jira ticket for one-click time tra
 | **Drag the grip** (top/left dots) | Moves the bar. Dropping it near any screen edge docks it, and other windows make room like they do for the taskbar. Dragging it away undocks it. |
 | **⋯ menu / tray icon** | Refresh, stop timer, dock (Floating / Left / Top / Right / Bottom), show/hide, settings, start with Windows, exit. |
 
+By default the bar, its tooltips and its menus are **hidden from screen sharing, screenshots and recordings**. You still see them, but people on a Teams or Zoom share don't. You can turn this off in Settings, or set the bar to show only ticket keys.
+
 Buttons are sorted by Jira priority (priority 1 first) and then by key. The coloured strip on each button shows its priority. A ⚠ icon means some worklogs couldn't be posted yet. They are retried automatically, or you can click the icon to retry or discard them.
 
 ### Comment editor
@@ -29,6 +31,12 @@ Buttons are sorted by Jira priority (priority 1 first) and then by key. The colo
 
 ## Sign-in
 Jira Cloud uses your Atlassian email and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens). Only `https://<name>.atlassian.net` sites are accepted.
+
+**Use a scoped token (recommended).** On the token page choose **Create API token with scopes** → **Jira**, and select `read:jira-work`, `write:jira-work` and `read:jira-user`. A leaked scoped token only exposes Jira work items, not your whole Atlassian account. Scoped tokens only work through Atlassian's API gateway, `api.atlassian.com/ex/jira/<cloud id>`, so the app needs your site's cloud ID:
+- Settings looks it up automatically from `https://<site>/_edge/tenant_info`, without sending your token.
+- That endpoint isn't officially supported, so if the lookup fails, paste the cloud ID yourself. On admin.atlassian.com it's the value after `/s/` in the address bar.
+
+A classic token still works, but Settings warns that it has full access to your account.
 
 The site, email and token are encrypted together with Windows DPAPI for your account, in `credentials.bin`. Editing other files therefore can't redirect the token to a different site. If you change the site in Settings, you must enter the token again.
 

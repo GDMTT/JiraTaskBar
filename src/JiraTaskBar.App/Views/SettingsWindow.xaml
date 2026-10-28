@@ -3,7 +3,7 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="Jira TaskBar – Settings"
-                 Width="560" SizeToContent="Height"
+                 Width="560" SizeToContent="Height" MaxHeight="{x:Static SystemParameters.MaximizedPrimaryScreenHeight}"
                  ResizeMode="NoResize"
                  WindowStartupLocation="CenterScreen"
                  ExtendsContentIntoTitleBar="True"
@@ -17,7 +17,8 @@
 
         <ui:TitleBar Title="Jira TaskBar – Settings" ShowMaximize="False" ShowMinimize="False" />
 
-        <StackPanel Grid.Row="1" Margin="20,8,20,20">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="20,8,20,20">
             <TextBlock x:Name="IntroText" TextWrapping="Wrap" Opacity="0.8" Margin="0,0,0,12"
                        Text="Connect to Jira Cloud with your Atlassian account email and an API token." />
 
@@ -34,8 +35,30 @@
                 </TextBlock>
             </DockPanel>
             <PasswordBox x:Name="TokenBox" Margin="0,4,0,2" />
-            <TextBlock x:Name="TokenHint" FontSize="11" Opacity="0.65" Margin="0,0,0,10"
+            <TextBlock x:Name="TokenHint" FontSize="11" Opacity="0.65" Margin="0,0,0,6"
                        Text="Stored encrypted for your Windows account (DPAPI). Leave blank to keep the saved token." />
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <RadioButton x:Name="ScopedRadio" GroupName="TokenType" Margin="0,0,16,0" Checked="TokenType_Changed"
+                             Content="Scoped token (recommended)"
+                             ToolTip="Limited to Jira work items. Calls go through api.atlassian.com." />
+                <RadioButton x:Name="ClassicRadio" GroupName="TokenType" Checked="TokenType_Changed"
+                             Content="Classic token"
+                             ToolTip="Has all of your Atlassian permissions, including Confluence." />
+            </StackPanel>
+            <StackPanel x:Name="ScopedPanel" Margin="0,0,0,10">
+                <TextBlock FontSize="11" Opacity="0.75" TextWrapping="Wrap">
+                    <Run Text="When creating it, choose" />
+                    <Run FontWeight="SemiBold" Text="Create API token with scopes" />
+                    <Run Text="→ Jira, and select:" />
+                    <Run x:Name="ScopesRun" FontFamily="Consolas" />
+                </TextBlock>
+                <TextBlock Text="Cloud ID" FontWeight="SemiBold" Margin="0,6,0,0" />
+                <ui:TextBox x:Name="CloudIdBox" Margin="0,4,0,2" FontFamily="Consolas"
+                            PlaceholderText="Found automatically from the site – or paste it from admin.atlassian.com" />
+            </StackPanel>
+            <TextBlock x:Name="ClassicWarning" FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap" Foreground="#F5A623"
+                       Text="A classic token can do anything you can do in Atlassian Cloud, including Confluence. If it leaks, all of that is exposed – prefer a scoped token." />
 
             <TextBlock Text="Tickets to show (JQL)" FontWeight="SemiBold" />
             <ui:TextBox x:Name="JqlBox" Margin="0,4,0,2" AcceptsReturn="True" TextWrapping="Wrap" MinLines="2"
@@ -66,7 +89,13 @@
                 <ComboBoxItem Content="Don't log" />
             </ComboBox>
 
-            <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,12" />
+            <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,8" />
+            <ui:ToggleSwitch x:Name="HideFromCaptureSwitch" Margin="0,0,0,8"
+                             Content="Hide the bar from screen sharing and recordings"
+                             ToolTip="You still see the bar; Teams, Zoom, screenshots and recordings don't. Ticket titles and tooltips stay private during calls." />
+            <ui:ToggleSwitch x:Name="ShowTitlesSwitch" Margin="0,0,0,12"
+                             Content="Show ticket titles on the bar"
+                             ToolTip="Off: buttons show only the ticket key; hover to see the title." />
 
             <ui:InfoBar x:Name="Status" IsClosable="False" IsOpen="False" Margin="0,0,0,12" />
 
@@ -76,5 +105,6 @@
                 <ui:Button x:Name="SaveButton" Content="Save" Appearance="Primary" Click="Save_Click" DockPanel.Dock="Right" IsDefault="True" />
             </DockPanel>
         </StackPanel>
+        </ScrollViewer>
     </Grid>
 </ui:FluentWindow>

@@ -9,7 +9,8 @@ namespace JiraTaskBar.Core.Storage;
 /// The Jira site, email and API token, always stored and loaded together so the token can
 /// only ever be sent to the site it was saved for.
 /// </summary>
-public sealed record StoredCredentials(string SiteUrl, string Email, string ApiToken);
+/// <param name="CloudId">Set when the token is a scoped token (calls go through the API gateway).</param>
+public sealed record StoredCredentials(string SiteUrl, string Email, string ApiToken, string? CloudId = null);
 
 /// <summary>
 /// Stores <see cref="StoredCredentials"/> encrypted with DPAPI for the current Windows user.

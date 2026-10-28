@@ -46,7 +46,12 @@ public partial class CommentWindow : FluentWindow
 
     private readonly JiraIssue _issue;
     private readonly IJiraClient _client;
+    /// <summary>pending\<guid>: deleted when the window closes (and any leftovers at the next start).</summary>
     private readonly string _workDir;
+    /// <summary>Attachments + preview page; the only folder the preview can load from.</summary>
+    private readonly string _filesDir;
+    /// <summary>This window's own WebView2 profile (cache, cookies), so nothing outlives the window.</summary>
+    private readonly string _browserDir;
     private readonly ObservableCollection<PendingAttachment> _attachments = [];
     private bool _previewReady;
     private bool _busy;
@@ -59,7 +64,9 @@ public partial class CommentWindow : FluentWindow
         _issue = issue;
         _client = client;
         _workDir = Path.Combine(AppPaths.DataDirectory, "pending", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_workDir);
+        _filesDir = Path.Combine(_workDir, "files");
+        _browserDir = Path.Combine(_workDir, "browser");
+        Directory.CreateDirectory(_filesDir);
 
         Title = $"Comment on {issue.Key}";
         TitleBarControl.Title = Title;
@@ -267,7 +274,7 @@ public partial class CommentWindow : FluentWindow
         try
         {
             var name = UniqueName(Path.GetFileName(sourcePath));
-            var target = Path.Combine(_workDir, name);
+            var target = Path.Combine(_filesDir, name);
             File.Copy(sourcePath, target);
             AddAttachment(new PendingAttachment(name, target));
         }
@@ -339,7 +346,7 @@ public partial class CommentWindow : FluentWindow
         try
         {
             var name = UniqueName($"paste-{DateTime.Now:yyyyMMdd-HHmmss}.png");
-            var path = Path.Combine(_workDir, name);
+            var path = Path.Combine(_filesDir, name);
             SaveClipboardImage(path);
             AddAttachment(new PendingAttachment(name, path));
         }
@@ -393,9 +400,9 @@ public partial class CommentWindow : FluentWindow
         {
             if (!_previewReady)
             {
-                var env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(AppPaths.DataDirectory, "WebView2"));
+                var env = await CoreWebView2Environment.CreateAsync(null, _browserDir);
                 await PreviewView.EnsureCoreWebView2Async(env);
-                PreviewView.CoreWebView2.SetVirtualHostNameToFolderMapping(PreviewHost, _workDir, CoreWebView2HostResourceAccessKind.Allow);
+                PreviewView.CoreWebView2.SetVirtualHostNameToFolderMapping(PreviewHost, _filesDir, CoreWebView2HostResourceAccessKind.Allow);
                 PreviewView.CoreWebView2.Settings.AreDevToolsEnabled = false;
                 PreviewView.CoreWebView2.Settings.IsScriptEnabled = false;
                 PreviewView.CoreWebView2.NavigationStarting += (_, args) =>
@@ -419,7 +426,7 @@ public partial class CommentWindow : FluentWindow
                     : null,
                 App.IsDarkTheme,
                 imageOrigin: $"https://{PreviewHost}");
-            await File.WriteAllTextAsync(Path.Combine(_workDir, PreviewFile), html);
+            await File.WriteAllTextAsync(Path.Combine(_filesDir, PreviewFile), html);
             PreviewView.CoreWebView2.Navigate($"https://{PreviewHost}/{PreviewFile}?v={Environment.TickCount64}");
         }
         catch (Exception ex)
@@ -559,14 +566,34 @@ public partial class CommentWindow : FluentWindow
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e);
+        var environment = _previewReady ? PreviewView.CoreWebView2?.Environment : null;
+        if (environment is null)
+        {
+            PreviewView.Dispose();
+            _ = DeleteWorkDirAsync();
+            return;
+        }
+
+        // The profile folder stays locked until WebView2's browser process exits, which happens
+        // shortly after the control is disposed; delete the screenshots and cache then.
+        environment.BrowserProcessExited += (_, _) => _ = DeleteWorkDirAsync();
         PreviewView.Dispose();
-        try
+    }
+
+    private async Task DeleteWorkDirAsync()
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
         {
-            Directory.Delete(_workDir, recursive: true);
+            try
+            {
+                if (Directory.Exists(_workDir)) Directory.Delete(_workDir, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(400 * (attempt + 1)));
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // WebView2 may still hold a file briefly; leftovers are harmless.
-        }
+        Log.Info($"Couldn't remove {_workDir} yet; it will be cleaned up at the next start");
     }
 }

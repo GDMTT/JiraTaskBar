@@ -42,6 +42,16 @@ public class WindowSmokeTests
             var menu = controller.BuildMenu();
             Assert.NotEmpty(menu.Items);
 
+            // Privacy options: capture exclusion applies without error, and keys-only hides the title line.
+            CapturePrivacy.Apply(bar, enabled: true);
+            Assert.True(CapturePrivacy.Enabled);
+            CapturePrivacy.Apply(bar, enabled: false);
+            var keysOnly = new TicketViewModel(issue, _ => { }, _ => { }, _ => { }, showTitles: () => false);
+            Assert.False(keysOnly.HasSubtitle);
+            keysOnly.IsActive = true;
+            keysOnly.ElapsedText = "0:05";
+            Assert.True(keysOnly.HasSubtitle);
+
             var comment = new CommentWindow(issue, new NullJiraClient());
             comment.ShowNextTo(new WindowInteropHelper(bar).Handle);
             comment.UpdateLayout();

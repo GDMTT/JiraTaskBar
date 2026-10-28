@@ -108,6 +108,12 @@ public sealed partial class BarViewModel : ObservableObject
 
     public TicketViewModel? Find(string key) => _byKey.GetValueOrDefault(key);
 
+    /// <summary>Re-renders button text after the show-titles setting changes.</summary>
+    public void RefreshTitles()
+    {
+        foreach (var t in Tickets) t.RefreshSubtitle();
+    }
+
     private void Rebuild()
     {
         var activeKey = _app.Tracker.ActiveKey;
@@ -152,7 +158,8 @@ public sealed partial class BarViewModel : ObservableObject
         var vm = new TicketViewModel(issue,
             toggle: t => _app.ToggleTimer(t.Key),
             open: t => _app.OpenInBrowser(t.Key),
-            comment: t => _app.OpenCommentEditor(t));
+            comment: t => _app.OpenCommentEditor(t),
+            showTitles: () => _app.Settings.ShowTitlesOnBar);
         _byKey[issue.Key] = vm;
         return vm;
     }

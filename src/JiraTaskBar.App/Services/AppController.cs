@@ -93,6 +93,7 @@ public sealed class AppController : IDisposable
         _bar = new BarWindow(Bar, this) { Opacity = 0 };
         _bar.Show();
         RestoreDock();
+        ApplyDisplaySettings();
         _bar.Opacity = 1;
 
         await ResolveRecoveryAsync();
@@ -127,7 +128,15 @@ public sealed class AppController : IDisposable
         if (_credentials is null || TrySite() is not { } site) return;
 
         _http = JiraClient.CreateHttpClient();
-        Client = new JiraClient(_http, new JiraConnection(site, _credentials.Email, _credentials.ApiToken));
+        try
+        {
+            // A cloud ID means a scoped token: calls go through api.atlassian.com instead of the site.
+            Client = new JiraClient(_http, new JiraConnection(site, _credentials.Email, _credentials.ApiToken, _credentials.CloudId));
+        }
+        catch (ArgumentException ex)
+        {
+            Log.Error("Stored credentials are invalid", ex);
+        }
     }
 
     /// <summary>
@@ -517,9 +526,17 @@ public sealed class AppController : IDisposable
 
     private void OpenSettings() => OpenSettings(message: null);
 
+    /// <summary>Applies the privacy display options: capture exclusion and titles on buttons.</summary>
+    private void ApplyDisplaySettings()
+    {
+        if (_bar is not null) CapturePrivacy.Apply(_bar, Settings.HideFromScreenCapture);
+        Bar.RefreshTitles();
+    }
+
     private void OpenSettings(string? message)
     {
         if (!ShowSettingsDialog(firstRun: false, message)) return;
+        ApplyDisplaySettings();
         Connect();
         ApplyRefreshInterval();
         _ = Bar.RefreshAsync();

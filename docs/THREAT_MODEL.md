@@ -166,9 +166,9 @@ Ratings: **H**igh / **M**edium / **L**ow for likelihood × impact. ✅ means the
 | 3 | `Shell.OpenUrl` allows only http/https/mailto (no UNC); preview navigation and new-window requests both go through it; folders open through a separate `OpenFolder` | E1 | XS | ✅ Done |
 | 4 | "Reply to customer" shows a warning banner and relabels the button "Send to customer"; posting (including Ctrl+Enter) asks for confirmation, mentioning any attachments | I2 | S | ✅ Done |
 | 5 | Startup deletes leftover `pending\` screenshots and the WebView2 cache folder; the preview never fetches remote images (placeholder instead) and has a CSP: `default-src 'none'`, images only from the local attachments host | I5, I6 | S | ✅ Done |
-| 6 | Switch to **scoped API tokens** and document the minimum scopes | §4, S1 | M | Open |
+| 6 | **Scoped API tokens** supported and recommended (the default for new sign-ins). Calls go to `https://api.atlassian.com/ex/jira/{cloudId}/` with Basic auth. The cloud ID is looked up from `/_edge/tenant_info` without credentials, or pasted by hand, and must be a GUID (no path injection). It is stored inside the encrypted credentials. Settings lists the minimum scopes (`read:jira-work`, `write:jira-work`, `read:jira-user`) and warns when a classic token is used. Existing classic tokens keep working | §4, S1 | M | ✅ Done |
 | 7 | Site, email and token are stored as one DPAPI blob (`credentials.bin`, new entropy); `settings.json` no longer holds them. Changing the site needs the token re-entered. A v1 `token.bin` is migrated once, using the v1 `settings.json` site, then deleted | S1 | S | ✅ Done |
-| 8 | Screen-capture exclusion / keys-only option | I4 | S | Open |
+| 8 | "Hide the bar from screen sharing and recordings" (**on by default**) applies `WDA_EXCLUDEFROMCAPTURE` to the bar and to every tooltip and context menu as it opens. "Show ticket titles on the bar" can be turned off for keys-only buttons, with titles still in the tooltip | I4 | S | ✅ Done |
 | 9 | 401 shows one "Jira sign-in needed" prompt that leads to Settings; automatic refreshes and retries pause until the token is replaced (repeated failed sign-ins can trip Atlassian's account protection); worklogs stay queued. 429/503 are retried up to 3× honouring `Retry-After` (capped at 60 s), else 2/4/8 s back-off | D2, D3 | S | ✅ Done |
 | 10 | Code side done: `packages.lock.json` (locked mode in CI/release), NuGet Audit on all packages with high/critical failing the build, package source mapping, nuget.org repository signature **required** (trusted certs from `dotnet nuget trust source`), `build/publish.ps1` (locked restore → tests → single-file publish → optional Authenticode signing with timestamp → SHA-256). **Still needs IT:** confirm whether an internal feed is mandated, provide a code-signing certificate, and install under Program Files | E2, E3, S4 | M | ◐ Partly done |
 | 11 | Verify attachment visibility on Service Management | I3 | XS (test) | Open |
@@ -176,7 +176,9 @@ Ratings: **H**igh / **M**edium / **L**ow for likelihood × impact. ✅ means the
 
 **Residual notes on the actions above**
 - **S1:** settings tampering can no longer redirect the token. The one-time v1 migration trusts the v1 `settings.json` site, and that site is still checked against `*.atlassian.net`.
-- **I5:** the WebView2 cache is cleared at the *next start*, not when the comment window closes, so cached preview images can stay on disk while the app runs.
+- **I5:** each comment window now has its own WebView2 profile inside its `pending\<guid>\` folder. The whole folder (screenshots plus browser cache) is deleted once WebView2's browser process exits after the window closes. Anything still locked is removed at the next start.
+- **I4:** capture exclusion needs Windows 10 2004 or later. It doesn't hide the bar from someone looking at your physical screen, or from tray notifications, which show ticket keys.
+- **§4 / scoped tokens:** the cloud-ID lookup uses an endpoint Atlassian doesn't support. If it changes, the lookup fails safely and the user pastes the ID. The app can't verify that a token is really scoped; it trusts the user's choice of token type.
 - **D3:** the token's expiry date isn't available through the API, so there's no advance warning; the app reacts at the first 401.
 
 ## 7. Assumptions and residual risk

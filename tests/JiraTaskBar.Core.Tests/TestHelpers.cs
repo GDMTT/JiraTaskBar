@@ -11,7 +11,7 @@ public sealed class FakeTime(DateTimeOffset start) : TimeProvider
     public void Advance(TimeSpan by) => Now += by;
 }
 
-public sealed record RecordedRequest(HttpMethod Method, string PathAndQuery, string? Body, IReadOnlyDictionary<string, string> Headers);
+public sealed record RecordedRequest(HttpMethod Method, string PathAndQuery, string? Body, IReadOnlyDictionary<string, string> Headers, Uri Url);
 
 /// <summary>Answers requests from a queue of canned responses and records what was sent.</summary>
 public sealed class FakeHandler : HttpMessageHandler
@@ -29,7 +29,7 @@ public sealed class FakeHandler : HttpMessageHandler
     {
         var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
         var headers = request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase);
-        Requests.Add(new RecordedRequest(request.Method, request.RequestUri!.PathAndQuery, body, headers));
+        Requests.Add(new RecordedRequest(request.Method, request.RequestUri!.PathAndQuery, body, headers, request.RequestUri));
         var (status, json, retryAfter) = _responses.Count > 0 ? _responses.Dequeue() : (HttpStatusCode.OK, "{}", null);
         var response = new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
         if (retryAfter is { } delay)
