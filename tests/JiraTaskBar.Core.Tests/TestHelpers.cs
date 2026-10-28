@@ -16,12 +16,12 @@ public sealed record RecordedRequest(HttpMethod Method, string PathAndQuery, str
 /// <summary>Answers requests from a queue of canned responses and records what was sent.</summary>
 public sealed class FakeHandler : HttpMessageHandler
 {
-    private readonly Queue<(HttpStatusCode Status, string Body)> _responses = new();
+    private readonly Queue<(HttpStatusCode Status, string Body, TimeSpan? RetryAfter)> _responses = new();
     public List<RecordedRequest> Requests { get; } = [];
 
-    public FakeHandler Respond(string json, HttpStatusCode status = HttpStatusCode.OK)
+    public FakeHandler Respond(string json, HttpStatusCode status = HttpStatusCode.OK, TimeSpan? retryAfter = null)
     {
-        _responses.Enqueue((status, json));
+        _responses.Enqueue((status, json, retryAfter));
         return this;
     }
 
@@ -30,8 +30,11 @@ public sealed class FakeHandler : HttpMessageHandler
         var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
         var headers = request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase);
         Requests.Add(new RecordedRequest(request.Method, request.RequestUri!.PathAndQuery, body, headers));
-        var (status, json) = _responses.Count > 0 ? _responses.Dequeue() : (HttpStatusCode.OK, "{}");
-        return new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+        var (status, json, retryAfter) = _responses.Count > 0 ? _responses.Dequeue() : (HttpStatusCode.OK, "{}", null);
+        var response = new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+        if (retryAfter is { } delay)
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(delay);
+        return response;
     }
 }
 

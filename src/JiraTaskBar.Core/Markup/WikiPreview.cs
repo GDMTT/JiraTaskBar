@@ -183,8 +183,12 @@ public static partial class WikiPreview
     }
 
     /// <summary>Wraps the fragment in a styled HTML page for the WebView preview.</summary>
-    public static string ToDocument(string markup, Func<string, string?>? resolveImage = null, bool dark = false)
+    /// <param name="imageOrigin">The only origin images may load from (e.g. https://attachments.local); null blocks all images.</param>
+    public static string ToDocument(string markup, Func<string, string?>? resolveImage = null, bool dark = false, string? imageOrigin = null)
     {
+        // Defence in depth on top of encoding: no scripts, frames, fetches or remote resources at all.
+        var imgSrc = imageOrigin is null ? "'none'" : WebUtility.HtmlEncode(imageOrigin);
+        var csp = $"default-src 'none'; style-src 'unsafe-inline'; img-src {imgSrc}; form-action 'none'; base-uri 'none'";
         var fg = dark ? "#e6e6e6" : "#172b4d";
         var bg = dark ? "#202020" : "#ffffff";
         var border = dark ? "#444" : "#c1c7d0";
@@ -192,6 +196,7 @@ public static partial class WikiPreview
         var link = dark ? "#579dff" : "#0c66e4";
         return $$"""
             <!doctype html><html><head><meta charset="utf-8">
+            <meta http-equiv="Content-Security-Policy" content="{{csp}}">
             <style>
             body{font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.5;color:{{fg}};background:{{bg}};margin:12px;}
             a{color:{{link}}} h1,h2,h3,h4,h5,h6{margin:.8em 0 .3em;font-weight:600}
@@ -247,7 +252,10 @@ public static partial class WikiPreview
         {
             var name = m.Groups["name"].Value.Trim();
             var options = m.Groups["opts"].Value;
-            var url = name.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? name : resolveImage(name);
+            // Remote images are never fetched by the preview: they could be tracking pixels.
+            if (name.Contains("://", StringComparison.Ordinal))
+                return Hold($"<span class=\"missing\">🖼 remote image (not loaded in preview): {WebUtility.HtmlEncode(name)}</span>");
+            var url = resolveImage(name);
             if (url is null)
                 return Hold($"<span class=\"missing\">🖼 {WebUtility.HtmlEncode(name)}</span>");
             var cls = options.Contains("thumbnail", StringComparison.OrdinalIgnoreCase) ? " class=\"thumb\"" : string.Empty;

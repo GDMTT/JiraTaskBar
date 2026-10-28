@@ -10,36 +10,50 @@ namespace JiraTaskBar.App.Views;
 
 public partial class SettingsWindow : FluentWindow
 {
-    private readonly bool _hasSavedToken;
-    private readonly Func<string?> _savedToken;
+    private readonly StoredCredentials? _saved;
 
-    public SettingsWindow(AppSettings current, Func<string?> savedToken, bool firstRun)
+    /// <param name="saved">The current credentials; the token is reused only while the site stays the same.</param>
+    /// <param name="message">Optional reason shown at the top, e.g. "Your API token was rejected".</param>
+    public SettingsWindow(AppSettings current, StoredCredentials? saved, bool firstRun, string? message = null)
     {
         InitializeComponent();
         SystemThemeWatcher.Watch(this);
-        _savedToken = savedToken;
-        _hasSavedToken = !string.IsNullOrEmpty(savedToken());
+        _saved = saved;
 
-        SiteBox.Text = current.SiteUrl;
-        EmailBox.Text = current.Email;
+        SiteBox.Text = saved?.SiteUrl ?? current.SiteUrl ?? string.Empty;
+        EmailBox.Text = saved?.Email ?? current.Email ?? string.Empty;
         JqlBox.Text = current.Jql;
         RefreshBox.Value = current.RefreshMinutes;
         IdleBox.Value = current.IdlePromptMinutes;
         ShortSessionBox.SelectedIndex = current.ShortSessions == ShortSessionMode.RoundUpToMinute ? 0 : 1;
         StartupSwitch.IsChecked = current.StartWithWindows;
-        TokenHint.Visibility = _hasSavedToken ? Visibility.Visible : Visibility.Collapsed;
+        TokenHint.Visibility = saved is null ? Visibility.Collapsed : Visibility.Visible;
 
         if (firstRun)
             IntroText.Text = "Welcome! Connect to Jira Cloud with your Atlassian account email and an API token " +
                              "(the same details Jira Assistant uses for token sign-in).";
+        if (message is not null)
+            ShowStatus(InfoBarSeverity.Warning, message);
         Result = current;
     }
 
     /// <summary>The edited settings (valid when the dialog returns true).</summary>
     public AppSettings Result { get; private set; }
 
-    /// <summary>A newly entered token, or null to keep the saved one.</summary>
-    public string? NewToken { get; private set; }
+    /// <summary>The credentials to store (valid when the dialog returns true).</summary>
+    public StoredCredentials? Credentials { get; private set; }
+
+    /// <summary>
+    /// The token to use: a newly typed one, or the saved one if the site is unchanged.
+    /// A saved token is never re-pointed at a different site without being re-entered.
+    /// </summary>
+    private string? ResolveToken(Uri site)
+    {
+        if (!string.IsNullOrEmpty(TokenBox.Password)) return TokenBox.Password.Trim();
+        return _saved is not null && string.Equals(_saved.SiteUrl, site.ToString(), StringComparison.OrdinalIgnoreCase)
+            ? _saved.ApiToken
+            : null;
+    }
 
     private void CreateToken_Click(object sender, RoutedEventArgs e) =>
         Shell.OpenUrl("https://id.atlassian.com/manage-profile/security/api-tokens");
@@ -52,10 +66,10 @@ public partial class SettingsWindow : FluentWindow
         // Allow saving while offline, but not with credentials Jira has rejected.
         if (outcome == TestOutcome.Invalid) return;
 
+        var site = JiraConnection.NormalizeSiteUrl(SiteBox.Text);
+        Credentials = new StoredCredentials(site.ToString(), EmailBox.Text.Trim(), ResolveToken(site)!);
         Result = new AppSettings
         {
-            SiteUrl = JiraConnection.NormalizeSiteUrl(SiteBox.Text).ToString(),
-            Email = EmailBox.Text.Trim(),
             Jql = string.IsNullOrWhiteSpace(JqlBox.Text) ? AppSettings.DefaultJql : JqlBox.Text.Trim(),
             RefreshMinutes = (int)Math.Clamp(RefreshBox.Value ?? 5, 1, 120),
             IdlePromptMinutes = (int)Math.Clamp(IdleBox.Value ?? 10, 0, 480),
@@ -66,7 +80,6 @@ public partial class SettingsWindow : FluentWindow
             FloatLeft = Result.FloatLeft,
             FloatTop = Result.FloatTop,
         };
-        NewToken = string.IsNullOrEmpty(TokenBox.Password) ? null : TokenBox.Password.Trim();
         DialogResult = true;
     }
 
@@ -88,10 +101,13 @@ public partial class SettingsWindow : FluentWindow
         }
 
         var email = EmailBox.Text.Trim();
-        var token = string.IsNullOrEmpty(TokenBox.Password) ? _savedToken() : TokenBox.Password.Trim();
+        var token = ResolveToken(site);
         if (email.Length == 0 || string.IsNullOrEmpty(token))
         {
-            ShowStatus(InfoBarSeverity.Error, "Email and API token are required.");
+            var siteChanged = _saved is not null && string.IsNullOrEmpty(TokenBox.Password);
+            ShowStatus(InfoBarSeverity.Error, siteChanged
+                ? "You changed the Jira site – enter the API token for that site."
+                : "Email and API token are required.");
             return TestOutcome.Invalid;
         }
 

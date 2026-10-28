@@ -47,7 +47,9 @@ public class WindowSmokeTests
             comment.UpdateLayout();
             comment.Close();
 
-            var settings = new SettingsWindow(new AppSettings(), () => null, firstRun: true);
+            var settings = new SettingsWindow(new AppSettings(),
+                new StoredCredentials("https://example.atlassian.net/", "a@b.c", "t"), firstRun: false,
+                message: "Jira rejected the saved API token.");
             settings.Show();
             settings.UpdateLayout();
             settings.Close();

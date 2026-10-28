@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Windows;
@@ -26,7 +27,7 @@ public sealed class AppController : IDisposable
 {
     private readonly Application _app;
     private readonly JsonFileStore<AppSettings> _settingsStore = new(AppPaths.File("settings.json"));
-    private readonly SecretStore _secrets = new(AppPaths.File("token.bin"));
+    private readonly SecretStore _secrets = new(AppPaths.File("credentials.bin"), legacyTokenPath: AppPaths.File("token.bin"));
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _refresh = new();
     private readonly Dictionary<string, CommentWindow> _commentWindows = new(StringComparer.OrdinalIgnoreCase);
@@ -39,11 +40,13 @@ public sealed class AppController : IDisposable
     private DateTimeOffset _lastHeartbeat;
     private DateTimeOffset? _awaySinceUtc;
     private bool _awayPromptOpen;
+    private StoredCredentials? _credentials;
 
     public AppController(Application app)
     {
         _app = app;
         Settings = _settingsStore.Load() ?? new AppSettings();
+        _credentials = LoadCredentials();
         Tracker = new TimeTracker(new JsonFileStore<TrackerState>(AppPaths.File("state.json")), TimeProvider.System);
         Worklogs = new WorklogService(() => Client,
             new WorklogQueue(new JsonFileStore<List<PendingWorklog>>(AppPaths.File("pending-worklogs.json"))),
@@ -74,7 +77,8 @@ public sealed class AppController : IDisposable
     public async Task StartAsync()
     {
         Log.Info("Starting Jira TaskBar");
-        if (!Settings.IsConfigured || string.IsNullOrEmpty(_secrets.LoadToken()) || TrySite() is null)
+        PurgeLeftovers();
+        if (TrySite() is null)
         {
             if (!ShowSettingsDialog(firstRun: true))
             {
@@ -98,7 +102,11 @@ public sealed class AppController : IDisposable
 
         _tick.Tick += OnTick;
         _tick.Start();
-        _refresh.Tick += async (_, _) => await Bar.RefreshAsync();
+        _refresh.Tick += async (_, _) =>
+        {
+            // Don't keep retrying a rejected token; the manual Refresh button still works.
+            if (!IsAuthFailed) await Bar.RefreshAsync();
+        };
         ApplyRefreshInterval();
 
         SystemEvents.SessionSwitch += OnSessionSwitch;
@@ -116,24 +124,76 @@ public sealed class AppController : IDisposable
         Client = null;
         _priorities = null;
 
-        var token = _secrets.LoadToken();
-        if (!Settings.IsConfigured || string.IsNullOrEmpty(token) || TrySite() is not { } site) return;
+        if (_credentials is null || TrySite() is not { } site) return;
 
         _http = JiraClient.CreateHttpClient();
-        Client = new JiraClient(_http, new JiraConnection(site, Settings.Email, token));
+        Client = new JiraClient(_http, new JiraConnection(site, _credentials.Email, _credentials.ApiToken));
     }
 
-    /// <summary>The configured site, or null if it isn't an https Jira Cloud site (the token is never sent to it then).</summary>
+    /// <summary>
+    /// Loads the encrypted site + email + token. A v1 install kept only the token encrypted (with the
+    /// site in settings.json); it is migrated once into the combined blob and settings.json is cleaned.
+    /// </summary>
+    private StoredCredentials? LoadCredentials()
+    {
+        var credentials = _secrets.Load();
+        if (credentials is null && _secrets.LoadLegacyToken() is { Length: > 0 } legacyToken
+            && !string.IsNullOrWhiteSpace(Settings.Email))
+        {
+            try
+            {
+                var site = JiraConnection.NormalizeSiteUrl(Settings.SiteUrl ?? string.Empty);
+                credentials = new StoredCredentials(site.ToString(), Settings.Email.Trim(), legacyToken);
+                _secrets.Save(credentials);
+                Log.Info("Migrated credentials to the combined encrypted store");
+            }
+            catch (ArgumentException ex)
+            {
+                Log.Error($"Not migrating legacy token for site '{Settings.SiteUrl}': {ex.Message}");
+            }
+        }
+
+        if (Settings.SiteUrl is not null || Settings.Email is not null)
+        {
+            Settings.SiteUrl = null;
+            Settings.Email = null;
+            SaveSettings();
+        }
+        return credentials;
+    }
+
+    /// <summary>The stored site, or null if there is none or it isn't an https Jira Cloud site.</summary>
     private Uri? TrySite()
     {
+        if (_credentials is null) return null;
         try
         {
-            return JiraConnection.NormalizeSiteUrl(Settings.SiteUrl);
+            return JiraConnection.NormalizeSiteUrl(_credentials.SiteUrl);
         }
         catch (ArgumentException ex)
         {
-            Log.Error($"Ignoring saved Jira site '{Settings.SiteUrl}': {ex.Message}");
+            Log.Error($"Ignoring stored Jira site '{_credentials.SiteUrl}': {ex.Message}");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Removes pasted screenshots left behind by a crash and the preview's browser cache.
+    /// Safe at startup: the single-instance mutex means no comment window is open.
+    /// </summary>
+    private static void PurgeLeftovers()
+    {
+        foreach (var name in new[] { "pending", "WebView2" })
+        {
+            var path = AppPaths.File(name);
+            try
+            {
+                if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log.Error($"Could not clean up {path}", ex);
+            }
         }
     }
 
@@ -149,7 +209,7 @@ public sealed class AppController : IDisposable
     public void OpenInBrowser(string key)
     {
         if (TrySite() is not { } site) return;
-        Shell.OpenUrl(new JiraConnection(site, Settings.Email, string.Empty).BrowseUrl(key));
+        Shell.OpenUrl(new JiraConnection(site, string.Empty, string.Empty).BrowseUrl(key));
     }
 
     public void OpenCommentEditor(TicketViewModel ticket)
@@ -177,7 +237,11 @@ public sealed class AppController : IDisposable
         var result = await Worklogs.LogAsync(session);
         Log.Info($"Worklog {session.Key} {session.Duration} -> {result.Outcome} {result.Error}");
         Bar.PendingWorklogs = Worklogs.PendingCount;
-        if (result.Outcome == WorklogOutcome.Queued)
+        if (result.IsAuthFailure)
+        {
+            ReportAuthFailure();
+        }
+        else if (result.Outcome == WorklogOutcome.Queued)
         {
             _tray?.ShowNotification("Worklog not saved yet",
                 $"{session.Key}: {BarViewModel.FormatElapsed(session.Duration)} will be retried automatically.\n{result.Error}",
@@ -451,24 +515,72 @@ public sealed class AppController : IDisposable
         }
     }
 
-    private void OpenSettings()
+    private void OpenSettings() => OpenSettings(message: null);
+
+    private void OpenSettings(string? message)
     {
-        if (!ShowSettingsDialog(firstRun: false)) return;
+        if (!ShowSettingsDialog(firstRun: false, message)) return;
         Connect();
         ApplyRefreshInterval();
         _ = Bar.RefreshAsync();
     }
 
-    private bool ShowSettingsDialog(bool firstRun)
+    private bool ShowSettingsDialog(bool firstRun, string? message = null)
     {
-        var window = new SettingsWindow(Settings, _secrets.LoadToken, firstRun);
-        if (window.ShowDialog() != true) return false;
+        var window = new SettingsWindow(Settings, _credentials, firstRun, message);
+        if (window.ShowDialog() != true || window.Credentials is not { } credentials) return false;
 
         Settings = window.Result;
-        if (window.NewToken is { } token) _secrets.SaveToken(token);
+        _secrets.Save(credentials);
+        _credentials = credentials;
+        IsAuthFailed = false;
         SaveSettings();
         ApplyStartup();
         return true;
+    }
+
+    // ---- Expired / revoked token --------------------------------------------------------
+
+    /// <summary>Set after Jira returns 401; automatic refreshes and retries pause until the token is updated.</summary>
+    public bool IsAuthFailed { get; private set; }
+
+    /// <summary>
+    /// Called when Jira rejects the token. Prompts once (not on every refresh) and stops automatic
+    /// calls, because repeated failed sign-ins can trigger Atlassian's account protection.
+    /// </summary>
+    public void ReportAuthFailure()
+    {
+        if (IsAuthFailed) return;
+        IsAuthFailed = true;
+        Log.Error("Jira rejected the API token (401); pausing automatic refresh");
+        _ = PromptReauthenticateAsync();
+    }
+
+    public void ReportAuthSuccess() => IsAuthFailed = false;
+
+    private bool _reauthPromptOpen;
+
+    private async Task PromptReauthenticateAsync()
+    {
+        if (_reauthPromptOpen || IsExiting) return;
+        _reauthPromptOpen = true;
+        try
+        {
+            var box = new MessageBox
+            {
+                Title = "Jira sign-in needed",
+                Content = "Jira rejected your API token – it may have expired or been revoked.\n\n" +
+                          "Timers keep running and worklogs are kept; they'll be posted once you enter a new token.",
+                PrimaryButtonText = "Update token…",
+                CloseButtonText = "Later",
+            };
+            if (await box.ShowDialogAsync() == MessageBoxResult.Primary)
+                OpenSettings("Jira rejected the saved API token. Create a new one and paste it below.");
+        }
+        finally
+        {
+            _reauthPromptOpen = false;
+        }
     }
 
     private void ApplyStartup()

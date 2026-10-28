@@ -32,7 +32,7 @@ The review found **three defects to fix before wider use**. All three are now **
                        │   └─ ShellExecute → default browser / Explorer             TB5   │  │
                        │                                                                  │  │
                        │  %LOCALAPPDATA%\JiraTaskBar   (TB2: any same-user process)       │  │
-                       │   settings.json · token.bin (DPAPI) · state.json ·               │  │
+                       │   settings.json · credentials.bin (DPAPI) · state.json ·         │  │
                        │   pending-worklogs.json · log.txt · pending\<guid>\* · WebView2\ │  │
                        │  HKCU\...\Run\JiraTaskBar                                        │  │
                        └──────────────────────────────────────────────────────────────────┼──┘
@@ -60,7 +60,7 @@ The review found **three defects to fix before wider use**. All three are now **
 
 | Asset | Why it matters | Where |
 |---|---|---|
-| **A1 API token** | Equivalent to a password for the user's Atlassian account. Bypasses SSO/MFA. | `token.bin` (DPAPI), process memory, `Authorization` header |
+| **A1 API token** | Equivalent to a password for the user's Atlassian account. Bypasses SSO/MFA. | `credentials.bin` (DPAPI, together with site and email), process memory, `Authorization` header |
 | **A2 Comment confidentiality** | Internal notes on Service Management tickets must not reach customers. | Comment editor, Jira API |
 | **A3 Worklog integrity** | Time records may feed billing, SLAs and payroll. | `state.json`, `pending-worklogs.json`, Jira |
 | **A4 Attachments / screenshots** | Pasted screenshots often contain sensitive data. | `pending\<guid>\`, WebView2 cache, Jira |
@@ -164,17 +164,20 @@ Ratings: **H**igh / **M**edium / **L**ow for likelihood × impact. ✅ means the
 | 1 | Always send `sd.public.comment`, defaulting to internal. Show the internal/public choice when the project type is unknown (defaulting to Internal). | I1 | XS | ✅ Done |
 | 2 | HTTPS-only site URL limited to `<name>.atlassian.net` (no port, no credentials in the URL); the client refuses non-HTTPS; redirects are not followed and are reported as errors; an invalid saved site reopens Settings instead of being used | S1, S2 | S | ✅ Done |
 | 3 | `Shell.OpenUrl` allows only http/https/mailto (no UNC); preview navigation and new-window requests both go through it; folders open through a separate `OpenFolder` | E1 | XS | ✅ Done |
-| 4 | Confirm and highlight public replies | I2 | S | Open |
-| 5 | Clean up `pending\` on startup and clear the WebView2 cache; block remote images in the preview | I5, I6 | S | Open |
+| 4 | "Reply to customer" shows a warning banner and relabels the button "Send to customer"; posting (including Ctrl+Enter) asks for confirmation, mentioning any attachments | I2 | S | ✅ Done |
+| 5 | Startup deletes leftover `pending\` screenshots and the WebView2 cache folder; the preview never fetches remote images (placeholder instead) and has a CSP: `default-src 'none'`, images only from the local attachments host | I5, I6 | S | ✅ Done |
 | 6 | Switch to **scoped API tokens** and document the minimum scopes | §4, S1 | M | Open |
-| 7 | Store site + email + token together in the DPAPI blob | S1 (remaining part) | S | Open |
+| 7 | Site, email and token are stored as one DPAPI blob (`credentials.bin`, new entropy); `settings.json` no longer holds them. Changing the site needs the token re-entered. A v1 `token.bin` is migrated once, using the v1 `settings.json` site, then deleted | S1 | S | ✅ Done |
 | 8 | Screen-capture exclusion / keys-only option | I4 | S | Open |
-| 9 | Clear 401 re-auth prompt and 429 back-off | D2, D3 | S | Open |
-| 10 | Feed policy check, lock file, source mapping, NuGet audit; sign the exe and install under Program Files | E2, E3, S4 | M | Open |
+| 9 | 401 shows one "Jira sign-in needed" prompt that leads to Settings; automatic refreshes and retries pause until the token is replaced (repeated failed sign-ins can trip Atlassian's account protection); worklogs stay queued. 429/503 are retried up to 3× honouring `Retry-After` (capped at 60 s), else 2/4/8 s back-off | D2, D3 | S | ✅ Done |
+| 10 | Code side done: `packages.lock.json` (locked mode in CI/release), NuGet Audit on all packages with high/critical failing the build, package source mapping, nuget.org repository signature **required** (trusted certs from `dotnet nuget trust source`), `build/publish.ps1` (locked restore → tests → single-file publish → optional Authenticode signing with timestamp → SHA-256). **Still needs IT:** confirm whether an internal feed is mandated, provide a code-signing certificate, and install under Program Files | E2, E3, S4 | M | ◐ Partly done |
 | 11 | Verify attachment visibility on Service Management | I3 | XS (test) | Open |
 | 12 | Evaluate OAuth 3LO (token broker) if the app is distributed beyond personal use | §4 | L | Open |
 
-S1 is only partly mitigated. A tampered `settings.json` can no longer send the token outside `*.atlassian.net`, but it could still point it at a *different* Atlassian site. Action 7 closes that gap.
+**Residual notes on the actions above**
+- **S1:** settings tampering can no longer redirect the token. The one-time v1 migration trusts the v1 `settings.json` site, and that site is still checked against `*.atlassian.net`.
+- **I5:** the WebView2 cache is cleared at the *next start*, not when the comment window closes, so cached preview images can stay on disk while the app runs.
+- **D3:** the token's expiry date isn't available through the API, so there's no advance warning; the app reacts at the first 401.
 
 ## 7. Assumptions and residual risk
 

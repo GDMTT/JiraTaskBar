@@ -51,7 +51,8 @@ public sealed class WorklogQueue
 
 public enum WorklogOutcome { Posted, Skipped, Queued }
 
-public sealed record WorklogResult(WorklogOutcome Outcome, int Seconds, string? Error = null);
+/// <param name="IsAuthFailure">Jira rejected the credentials (401); the worklog was queued.</param>
+public sealed record WorklogResult(WorklogOutcome Outcome, int Seconds, string? Error = null, bool IsAuthFailure = false);
 
 /// <summary>Posts finished sessions as Jira worklogs, queueing failures for retry.</summary>
 public sealed class WorklogService
@@ -89,7 +90,7 @@ public sealed class WorklogService
         {
             _queue.Enqueue(new PendingWorklog(Guid.NewGuid(), session.Key, session.StartedUtc, seconds, ex.Message, 1));
             QueueChanged?.Invoke(this, EventArgs.Empty);
-            return new WorklogResult(WorklogOutcome.Queued, seconds, ex.Message);
+            return new WorklogResult(WorklogOutcome.Queued, seconds, ex.Message, ex is JiraApiException { StatusCode: 401 });
         }
     }
 

@@ -21,17 +21,23 @@ public sealed class JiraClient : IJiraClient
 {
     private const string SearchFields = "summary,priority,status,project,issuetype";
     private const int MaxIssues = 200;
+    /// <summary>Retries after HTTP 429/503 before giving up (worklogs are then queued for later).</summary>
+    public const int MaxThrottleRetries = 3;
+    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(60);
 
     private readonly HttpClient _http;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
     /// <param name="http">Should come from <see cref="CreateHttpClient"/> so credentials never follow a redirect.</param>
-    public JiraClient(HttpClient http, JiraConnection connection)
+    /// <param name="delay">Waits between throttled retries; replaceable in tests.</param>
+    public JiraClient(HttpClient http, JiraConnection connection, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         // Defence in depth: never attach Basic credentials to a non-TLS request.
         if (connection.SiteUrl.Scheme != Uri.UriSchemeHttps)
             throw new ArgumentException("The Jira site must use https://.", nameof(connection));
 
         _http = http;
+        _delay = delay ?? Task.Delay;
         Connection = connection;
         _http.BaseAddress = connection.SiteUrl;
         var raw = Encoding.UTF8.GetBytes($"{connection.Email}:{connection.ApiToken}");
@@ -102,56 +108,90 @@ public sealed class JiraClient : IJiraClient
 
     public async Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default)
     {
-        using var content = new MultipartFormDataContent();
-        var file = new StreamContent(File.OpenRead(filePath));
-        file.Headers.ContentType = new MediaTypeHeaderValue(MimeType(filePath));
-        content.Add(file, "file", Path.GetFileName(filePath));
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/attachments")
+        var node = await SendRequestAsync(() =>
         {
-            Content = content,
-        };
-        request.Headers.Add("X-Atlassian-Token", "no-check");
-        var node = await SendRequestAsync(request, ct);
+            var content = new MultipartFormDataContent();
+            var file = new StreamContent(File.OpenRead(filePath));
+            file.Headers.ContentType = new MediaTypeHeaderValue(MimeType(filePath));
+            content.Add(file, "file", Path.GetFileName(filePath));
+
+            var request = new HttpRequestMessage(HttpMethod.Post, $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/attachments")
+            {
+                Content = content,
+            };
+            request.Headers.Add("X-Atlassian-Token", "no-check");
+            return request;
+        }, ct);
         return (node as JsonArray)?.FirstOrDefault()?["filename"]?.GetValue<string>() ?? Path.GetFileName(filePath);
     }
 
     private Task<JsonNode?> SendAsync(HttpMethod method, string url, JsonNode? body, CancellationToken ct)
     {
-        var request = new HttpRequestMessage(method, url);
-        if (body is not null)
-            request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
-        return SendRequestAsync(request, ct);
+        var json = body?.ToJsonString();
+        return SendRequestAsync(() =>
+        {
+            var request = new HttpRequestMessage(method, url);
+            if (json is not null)
+                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            return request;
+        }, ct);
     }
 
-    private async Task<JsonNode?> SendRequestAsync(HttpRequestMessage request, CancellationToken ct)
+    /// <summary>
+    /// Sends a request built by <paramref name="createRequest"/> (a request can only be sent once,
+    /// so retries build a fresh one). Throttled responses (429/503) are retried with back-off.
+    /// </summary>
+    private async Task<JsonNode?> SendRequestAsync(Func<HttpRequestMessage> createRequest, CancellationToken ct)
     {
-        using (request)
-        using (var response = await _http.SendAsync(request, ct))
+        for (var attempt = 0; ; attempt++)
         {
-            var text = await response.Content.ReadAsStringAsync(ct);
-            JsonNode? node = null;
-            if (!string.IsNullOrWhiteSpace(text))
+            using var request = createRequest();
+            using var response = await _http.SendAsync(request, ct);
+            var status = (int)response.StatusCode;
+            if (status is 429 or 503 && attempt < MaxThrottleRetries)
             {
-                try { node = JsonNode.Parse(text); }
-                catch (System.Text.Json.JsonException) { /* non-JSON error page */ }
+                await _delay(RetryDelay(response, attempt), ct);
+                continue;
             }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var status = (int)response.StatusCode;
-                var fallback = status switch
-                {
-                    >= 300 and < 400 => $"Jira redirected the request ({status}) – check the site address in Settings.",
-                    401 => "Jira rejected the email or API token (401).",
-                    403 => "You don't have permission for this action in Jira (403).",
-                    404 => "Not found in Jira (404).",
-                    _ => $"Jira returned {status} {response.ReasonPhrase}.",
-                };
-                throw new JiraApiException(JiraPayloads.ErrorMessage(node, fallback), status);
-            }
-            return node;
+            return await ReadResponseAsync(response, ct);
         }
+    }
+
+    /// <summary>Honours Retry-After (seconds or date), otherwise exponential back-off: 2s, 4s, 8s.</summary>
+    private static TimeSpan RetryDelay(HttpResponseMessage response, int attempt)
+    {
+        var retryAfter = response.Headers.RetryAfter;
+        TimeSpan? requested = retryAfter?.Delta
+            ?? (retryAfter?.Date is { } date ? date - DateTimeOffset.UtcNow : null);
+        var delay = requested is { } r && r > TimeSpan.Zero ? r : TimeSpan.FromSeconds(Math.Pow(2, attempt + 1));
+        return delay > MaxRetryDelay ? MaxRetryDelay : delay;
+    }
+
+    private static async Task<JsonNode?> ReadResponseAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        var text = await response.Content.ReadAsStringAsync(ct);
+        JsonNode? node = null;
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            try { node = JsonNode.Parse(text); }
+            catch (System.Text.Json.JsonException) { /* non-JSON error page */ }
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var status = (int)response.StatusCode;
+            var fallback = status switch
+            {
+                >= 300 and < 400 => $"Jira redirected the request ({status}) – check the site address in Settings.",
+                401 => "Jira rejected the email or API token (401).",
+                403 => "You don't have permission for this action in Jira (403).",
+                404 => "Not found in Jira (404).",
+                429 => "Jira is rate-limiting requests (429). Try again in a few minutes.",
+                _ => $"Jira returned {status} {response.ReasonPhrase}.",
+            };
+            throw new JiraApiException(JiraPayloads.ErrorMessage(node, fallback), status);
+        }
+        return node;
     }
 
     private static string MimeType(string path) => Path.GetExtension(path).ToLowerInvariant() switch

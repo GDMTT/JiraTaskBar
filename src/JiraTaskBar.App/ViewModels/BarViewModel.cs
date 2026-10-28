@@ -65,9 +65,15 @@ public sealed partial class BarViewModel : ObservableObject
         try
         {
             _lastIssues = await _app.FetchIssuesAsync();
+            _app.ReportAuthSuccess();
             StatusMessage = null;
             Rebuild();
             await _app.Worklogs.RetryPendingAsync();
+        }
+        catch (JiraApiException ex) when (ex.StatusCode == 401)
+        {
+            StatusMessage = "Jira sign-in expired – update your API token in Settings";
+            _app.ReportAuthFailure();
         }
         catch (Exception ex)
         {

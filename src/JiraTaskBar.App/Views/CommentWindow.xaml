@@ -123,17 +123,23 @@
             </ItemsControl.ItemTemplate>
         </ItemsControl>
 
-        <DockPanel Grid.Row="5" Margin="16,4,16,14" LastChildFill="True">
+        <StackPanel Grid.Row="5">
+        <!-- Shown while "Reply to customer" is selected, so a public reply is never a surprise. -->
+        <ui:InfoBar x:Name="PublicBanner" Margin="12,2,12,0" IsOpen="False" IsClosable="False" Severity="Warning"
+                    Title="Reply to customer"
+                    Message="This comment will be visible on the customer portal and emailed to the customer." />
+        <DockPanel Margin="16,4,16,14" LastChildFill="True">
             <StackPanel x:Name="VisibilityPanel" DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
                 <RadioButton x:Name="InternalRadio" Content="Internal note" GroupName="Visibility" IsChecked="True" Margin="0,0,12,0"
-                             ToolTip="Only visible to your team" />
+                             ToolTip="Only visible to your team" Checked="Visibility_Changed" />
                 <RadioButton x:Name="PublicRadio" Content="Reply to customer" GroupName="Visibility"
-                             ToolTip="Visible to the customer on the portal and sent by email" />
+                             ToolTip="Visible to the customer on the portal and sent by email" Checked="Visibility_Changed" />
             </StackPanel>
             <ui:Button DockPanel.Dock="Right" x:Name="PostButton" Appearance="Primary" Icon="{ui:SymbolIcon Send24}"
                        Content="Post" Margin="8,0,0,0" ToolTip="Post comment (Ctrl+Enter)" Click="Post_Click" />
             <ui:Button DockPanel.Dock="Right" Content="Cancel" Click="Cancel_Click" />
             <TextBlock x:Name="StatusText" Margin="12,0" VerticalAlignment="Center" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
         </DockPanel>
+        </StackPanel>
     </Grid>
 </ui:FluentWindow>

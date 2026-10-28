@@ -1,0 +1,15 @@
+<Project>
+  <!-- Supply-chain settings for every project (see docs/THREAT_MODEL.md, E2). -->
+  <PropertyGroup>
+    <!-- Pin exact package versions + hashes in packages.lock.json; CI builds refuse to drift. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
+
+    <!-- Check direct and transitive packages against the GitHub Advisory Database on restore. -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
+    <!-- High (NU1903) and critical (NU1904) advisories fail the build; low/moderate stay warnings. -->
+    <WarningsAsErrors>$(WarningsAsErrors);NU1903;NU1904</WarningsAsErrors>
+  </PropertyGroup>
+</Project>

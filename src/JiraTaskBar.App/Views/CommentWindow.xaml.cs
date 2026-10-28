@@ -417,7 +417,8 @@ public partial class CommentWindow : FluentWindow
                 _attachments.Any(a => a.IsImage && a.FileName.Equals(name, StringComparison.OrdinalIgnoreCase))
                     ? $"https://{PreviewHost}/{Uri.EscapeDataString(name)}"
                     : null,
-                App.IsDarkTheme);
+                App.IsDarkTheme,
+                imageOrigin: $"https://{PreviewHost}");
             await File.WriteAllTextAsync(Path.Combine(_workDir, PreviewFile), html);
             PreviewView.CoreWebView2.Navigate($"https://{PreviewHost}/{PreviewFile}?v={Environment.TickCount64}");
         }
@@ -454,6 +455,10 @@ public partial class CommentWindow : FluentWindow
             return;
         }
 
+        // Only an explicit "Reply to customer" choice makes a comment public, and it is confirmed first.
+        var isInternal = !IsPublicSelected;
+        if (!isInternal && !await ConfirmPublicReplyAsync()) return;
+
         SetBusy(true);
         try
         {
@@ -468,9 +473,7 @@ public partial class CommentWindow : FluentWindow
                     text = text.Replace(a.FileName, stored);
             }
 
-            ShowInfo("Posting comment…");
-            // Only an explicit "Reply to customer" choice makes a comment public.
-            var isInternal = !ShowsVisibilityChoice || PublicRadio.IsChecked != true;
+            ShowInfo(isInternal ? "Posting internal note…" : "Sending reply to customer…");
             await _client.AddCommentAsync(_issue.Key, text, isInternal);
             Log.Info($"Comment posted to {_issue.Key} (internal={isInternal})");
 
@@ -486,6 +489,30 @@ public partial class CommentWindow : FluentWindow
         {
             SetBusy(false);
         }
+    }
+
+    private bool IsPublicSelected => ShowsVisibilityChoice && PublicRadio.IsChecked == true;
+
+    private void Visibility_Changed(object sender, RoutedEventArgs e)
+    {
+        // Raised during InitializeComponent for the default radio, before the other controls exist.
+        if (PublicBanner is null || PostButton is null) return;
+        PublicBanner.IsOpen = IsPublicSelected;
+        PostButton.Content = IsPublicSelected ? "Send to customer" : "Post";
+    }
+
+    private async Task<bool> ConfirmPublicReplyAsync()
+    {
+        var attachments = _attachments.Count == 0 ? string.Empty
+            : $"\n\n{_attachments.Count} attachment(s) will be added to the ticket.";
+        var box = new MessageBox
+        {
+            Title = "Send to customer?",
+            Content = $"This reply on {_issue.Key} will be visible on the customer portal and emailed to the customer." + attachments,
+            PrimaryButtonText = "Send to customer",
+            CloseButtonText = "Cancel",
+        };
+        return await box.ShowDialogAsync() == MessageBoxResult.Primary;
     }
 
     private void SetBusy(bool busy)
