@@ -542,25 +542,38 @@ public partial class CommentWindow : FluentWindow
         StatusText.ToolTip = message;
     }
 
-    protected override async void OnClosing(CancelEventArgs e)
+    private bool _discardPromptOpen;
+
+    protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
         if (_allowClose || (Editor.Text.Trim().Length == 0 && _attachments.Count == 0)) return;
 
+        // Unsent text: cancel this close and ask afterwards. WPF doesn't allow showing a dialog
+        // (or changing this window's visibility) while the window is still in its Closing event.
         e.Cancel = true;
-        if (_busy) return;
-        var box = new MessageBox
+        if (_busy || _discardPromptOpen) return;
+        _discardPromptOpen = true;
+        Dispatcher.BeginInvoke(async () =>
         {
-            Title = "Discard comment?",
-            Content = $"Your comment on {_issue.Key} hasn't been posted.",
-            PrimaryButtonText = "Discard",
-            CloseButtonText = "Keep editing",
-        };
-        if (await box.ShowDialogAsync() == MessageBoxResult.Primary)
-        {
-            _allowClose = true;
-            Close();
-        }
+            try
+            {
+                var box = new MessageBox
+                {
+                    Title = "Discard comment?",
+                    Content = $"Your comment on {_issue.Key} hasn't been posted.",
+                    PrimaryButtonText = "Discard",
+                    CloseButtonText = "Keep editing",
+                    Owner = this,
+                };
+                if (await box.ShowDialogAsync() == MessageBoxResult.Primary)
+                    ForceClose();
+            }
+            finally
+            {
+                _discardPromptOpen = false;
+            }
+        });
     }
 
     protected override void OnClosed(EventArgs e)

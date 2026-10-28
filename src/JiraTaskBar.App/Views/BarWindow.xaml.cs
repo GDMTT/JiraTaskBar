@@ -259,7 +259,8 @@ public partial class BarWindow : Window
         if (!_app.IsExiting)
         {
             e.Cancel = true;
-            HideBar();
+            // Hiding inside the Closing event throws in WPF, so hide once it has finished.
+            Dispatcher.BeginInvoke(HideBar);
         }
         base.OnClosing(e);
     }

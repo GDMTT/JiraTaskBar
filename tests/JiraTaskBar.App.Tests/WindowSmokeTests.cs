@@ -64,6 +64,20 @@ public class WindowSmokeTests
             comment.UpdateLayout();
             comment.Close();
 
+            // Regression: Cancel with unsent text used to throw "Cannot set Visibility ... while a
+            // Window is closing". The close is now cancelled and the discard prompt deferred.
+            var unsent = new CommentWindow(issue, new NullJiraClient());
+            unsent.Show();
+            ((System.Windows.Controls.TextBox)unsent.FindName("Editor")).Text = "not posted yet";
+            unsent.Close();
+            Assert.True(unsent.IsVisible);
+            unsent.ForceClose();
+            Assert.False(unsent.IsVisible);
+
+            // Same for Alt+F4 on the bar: it must not throw, and it hides after the close is cancelled.
+            bar.Close();
+            Assert.True(bar.IsVisible);
+
             var settings = new SettingsWindow(new AppSettings(),
                 new StoredCredentials("https://example.atlassian.net/", "a@b.c", "t"), firstRun: false,
                 message: "Jira rejected the saved API token.");
