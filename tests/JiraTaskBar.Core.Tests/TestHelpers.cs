@@ -16,12 +16,23 @@ public sealed record RecordedRequest(HttpMethod Method, string PathAndQuery, str
 /// <summary>Answers requests from a queue of canned responses and records what was sent.</summary>
 public sealed class FakeHandler : HttpMessageHandler
 {
-    private readonly Queue<(HttpStatusCode Status, string Body, TimeSpan? RetryAfter)> _responses = new();
+    private readonly Queue<(HttpStatusCode Status, Func<HttpContent> Content, TimeSpan? RetryAfter)> _responses = new();
     public List<RecordedRequest> Requests { get; } = [];
 
     public FakeHandler Respond(string json, HttpStatusCode status = HttpStatusCode.OK, TimeSpan? retryAfter = null)
     {
-        _responses.Enqueue((status, json, retryAfter));
+        _responses.Enqueue((status, () => new StringContent(json, Encoding.UTF8, "application/json"), retryAfter));
+        return this;
+    }
+
+    public FakeHandler RespondBytes(byte[] body, string contentType)
+    {
+        _responses.Enqueue((HttpStatusCode.OK, () =>
+        {
+            var content = new ByteArrayContent(body);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+            return content;
+        }, null));
         return this;
     }
 
@@ -30,8 +41,10 @@ public sealed class FakeHandler : HttpMessageHandler
         var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
         var headers = request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase);
         Requests.Add(new RecordedRequest(request.Method, request.RequestUri!.PathAndQuery, body, headers, request.RequestUri));
-        var (status, json, retryAfter) = _responses.Count > 0 ? _responses.Dequeue() : (HttpStatusCode.OK, "{}", null);
-        var response = new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+        var (status, content, retryAfter) = _responses.Count > 0
+            ? _responses.Dequeue()
+            : (HttpStatusCode.OK, () => new StringContent("{}", Encoding.UTF8, "application/json"), null);
+        var response = new HttpResponseMessage(status) { Content = content() };
         if (retryAfter is { } delay)
             response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(delay);
         return response;
@@ -71,4 +84,5 @@ public sealed class FakeJiraClient : IJiraClient
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
     public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<byte[]?> GetIssueTypeIconAsync(string avatarId, CancellationToken ct = default) => throw new NotSupportedException();
 }

@@ -3,13 +3,15 @@ namespace JiraTaskBar.Core.Jira;
 /// <summary>A Jira priority. <see cref="Rank"/> is 1 for the highest priority in the site's priority order.</summary>
 public sealed record JiraPriority(string Id, string Name, int Rank);
 
+/// <param name="IssueTypeAvatarId">Numeric avatar ID of the issue type's icon, if Jira gave one.</param>
 public sealed record JiraIssue(
     string Key,
     string Summary,
     JiraPriority? Priority,
     string Status,
     string ProjectTypeKey,
-    string IssueType)
+    string IssueType,
+    string? IssueTypeAvatarId = null)
 {
     /// <summary>Jira Service Management projects support internal vs public comments.</summary>
     public bool IsServiceDesk => string.Equals(ProjectTypeKey, "service_desk", StringComparison.OrdinalIgnoreCase);

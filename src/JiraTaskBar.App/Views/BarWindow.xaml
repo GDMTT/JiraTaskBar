@@ -33,6 +33,16 @@
             </Style.Triggers>
         </Style>
 
+        <!-- Issue type icon: Jira's own icon when loaded, otherwise a matching built-in glyph. -->
+        <DataTemplate x:Key="TypeIconTemplate" DataType="{x:Type vm:TicketViewModel}">
+            <Grid Width="16" Height="16" ToolTip="{Binding Issue.IssueType}">
+                <Image Source="{Binding TypeIcon}" RenderOptions.BitmapScalingMode="HighQuality"
+                       Visibility="{Binding HasTypeIcon, Converter={StaticResource BoolToVisibility}}" />
+                <ui:SymbolIcon Symbol="{Binding TypeGlyph}" Foreground="{Binding TypeGlyphBrush}" FontSize="16"
+                               Visibility="{Binding ShowTypeGlyph, Converter={StaticResource BoolToVisibility}}" />
+            </Grid>
+        </DataTemplate>
+
         <DataTemplate x:Key="TicketTemplate" DataType="{x:Type vm:TicketViewModel}">
             <Grid x:Name="Cell" Margin="3,2"
                   Width="{Binding DataContext.ButtonWidth, RelativeSource={RelativeSource AncestorType=Window}}">
@@ -44,7 +54,11 @@
                     <ui:Button.ToolTip>
                         <ToolTip MaxWidth="380">
                             <StackPanel>
-                                <TextBlock FontWeight="SemiBold" Text="{Binding Key}" />
+                                <StackPanel Orientation="Horizontal">
+                                    <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource TypeIconTemplate}"
+                                                      Margin="0,0,6,0" VerticalAlignment="Center" />
+                                    <TextBlock FontWeight="SemiBold" Text="{Binding Key}" VerticalAlignment="Center" />
+                                </StackPanel>
                                 <TextBlock Margin="0,2,0,0" Text="{Binding Summary}" TextWrapping="Wrap" />
                                 <TextBlock Margin="0,4,0,0" Opacity="0.75" Text="{Binding MetaLine}" />
                                 <TextBlock Margin="0,6,0,0" FontSize="11" Opacity="0.6"
@@ -59,7 +73,12 @@
                         </Grid.ColumnDefinitions>
                         <Border Width="4" Margin="0,1,7,1" CornerRadius="2" Background="{Binding PriorityBrush}" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding Key}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" />
+                            <DockPanel>
+                                <ContentPresenter DockPanel.Dock="Left" Content="{Binding}" ContentTemplate="{StaticResource TypeIconTemplate}"
+                                                  Margin="0,0,5,0" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding Key}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                            </DockPanel>
                             <TextBlock Text="{Binding SubtitleText}" FontSize="11" Opacity="0.8" TextTrimming="CharacterEllipsis"
                                        Visibility="{Binding HasSubtitle, Converter={StaticResource BoolToVisibility}}" />
                         </StackPanel>

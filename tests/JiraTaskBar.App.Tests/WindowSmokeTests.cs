@@ -52,6 +52,13 @@ public class WindowSmokeTests
             keysOnly.ElapsedText = "0:05";
             Assert.True(keysOnly.HasSubtitle);
 
+            // Issue type: glyph until Jira's icon loads, then the icon.
+            Assert.True(keysOnly.ShowTypeGlyph);
+            keysOnly.TypeIcon = System.Windows.Media.Imaging.BitmapSource.Create(1, 1, 96, 96,
+                System.Windows.Media.PixelFormats.Bgra32, null, new byte[4], 4);
+            Assert.True(keysOnly.HasTypeIcon);
+            Assert.False(keysOnly.ShowTypeGlyph);
+
             var comment = new CommentWindow(issue, new NullJiraClient());
             comment.ShowNextTo(new WindowInteropHelper(bar).Handle);
             comment.UpdateLayout();
@@ -94,5 +101,6 @@ public class WindowSmokeTests
         public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<byte[]?> GetIssueTypeIconAsync(string avatarId, CancellationToken ct = default) => throw new NotSupportedException();
     }
 }

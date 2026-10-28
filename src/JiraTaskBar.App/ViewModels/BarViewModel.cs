@@ -148,8 +148,20 @@ public sealed partial class BarViewModel : ObservableObject
         while (Tickets.Count > target.Count)
             Tickets.RemoveAt(Tickets.Count - 1);
 
+        foreach (var ticket in target)
+            _ = LoadTypeIconAsync(ticket);
+
         foreach (var key in _byKey.Keys.Where(k => !target.Any(t => t.Key.Equals(k, StringComparison.OrdinalIgnoreCase))).ToList())
             _byKey.Remove(key);
+    }
+
+    /// <summary>Shows the issue type's Jira icon (cached per type); the built-in glyph stays if it can't load.</summary>
+    private async Task LoadTypeIconAsync(TicketViewModel ticket)
+    {
+        var avatarId = ticket.Issue.IssueTypeAvatarId;
+        var icon = await _app.Icons.GetAsync(avatarId);
+        // The issue may have been refreshed (e.g. type changed) while the icon loaded.
+        if (ticket.Issue.IssueTypeAvatarId == avatarId) ticket.TypeIcon = icon;
     }
 
     private TicketViewModel GetOrCreate(JiraIssue issue)

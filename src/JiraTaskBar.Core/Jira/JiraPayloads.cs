@@ -102,13 +102,36 @@ public static class JiraPayloads
                 Priority: priority,
                 Status: fields?["status"]?["name"]?.GetValue<string>() ?? string.Empty,
                 ProjectTypeKey: fields?["project"]?["projectTypeKey"]?.GetValue<string>() ?? string.Empty,
-                IssueType: fields?["issuetype"]?["name"]?.GetValue<string>() ?? string.Empty));
+                IssueType: fields?["issuetype"]?["name"]?.GetValue<string>() ?? string.Empty,
+                IssueTypeAvatarId: AvatarId(fields?["issuetype"])));
         }
 
         var isLast = node?["isLast"]?.GetValue<bool>() ?? true;
         var next = isLast ? null : node?["nextPageToken"]?.GetValue<string>();
         return (issues, next);
     }
+
+    /// <summary>
+    /// The issue type's avatar ID: the "avatarId" field (a number), or the ID inside its
+    /// ".../universal_avatar/view/type/issuetype/avatar/{id}" icon URL. Only digits are accepted.
+    /// </summary>
+    public static string? AvatarId(JsonNode? issueType)
+    {
+        if (issueType is null) return null;
+        var direct = issueType["avatarId"]?.ToJsonString().Trim('"');
+        if (IsAvatarId(direct)) return direct;
+
+        var iconUrl = issueType["iconUrl"]?.GetValue<string>();
+        const string marker = "/avatar/";
+        var at = iconUrl?.LastIndexOf(marker, StringComparison.Ordinal) ?? -1;
+        if (at < 0) return null;
+        var tail = iconUrl![(at + marker.Length)..];
+        var id = new string(tail.TakeWhile(char.IsAsciiDigit).ToArray());
+        return IsAvatarId(id) ? id : null;
+    }
+
+    public static bool IsAvatarId(string? value) =>
+        value is { Length: > 0 and <= 18 } && value.All(char.IsAsciiDigit);
 
     public static string ErrorMessage(JsonNode? node, string fallback)
     {

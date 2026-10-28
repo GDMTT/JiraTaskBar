@@ -39,7 +39,21 @@ public sealed partial class TicketViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Summary), nameof(PriorityLabel), nameof(PriorityBrush), nameof(MetaLine), nameof(SubtitleText), nameof(HasSubtitle))]
+    [NotifyPropertyChangedFor(nameof(TypeGlyph), nameof(TypeGlyphBrush))]
     private JiraIssue _issue;
+
+    /// <summary>The issue type's icon from Jira, once loaded; null shows <see cref="TypeGlyph"/> instead.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasTypeIcon), nameof(ShowTypeGlyph))]
+    private ImageSource? _typeIcon;
+
+    public bool HasTypeIcon => TypeIcon is not null;
+
+    public bool ShowTypeGlyph => TypeIcon is null;
+
+    public Wpf.Ui.Controls.SymbolRegular TypeGlyph => Services.TypeGlyph.For(Issue.IssueType).Symbol;
+
+    public Brush TypeGlyphBrush => Services.TypeGlyph.For(Issue.IssueType).Brush;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SubtitleText), nameof(HasSubtitle))]

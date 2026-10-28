@@ -51,6 +51,7 @@ public sealed class AppController : IDisposable
         Worklogs = new WorklogService(() => Client,
             new WorklogQueue(new JsonFileStore<List<PendingWorklog>>(AppPaths.File("pending-worklogs.json"))),
             () => Settings.ShortSessions);
+        Icons = new IssueTypeIcons(() => Client);
         Bar = new BarViewModel(this);
 
         Tracker.SessionCompleted += (_, session) => TrackWorklog(PostWorklogAsync(session));
@@ -71,6 +72,8 @@ public sealed class AppController : IDisposable
     public WorklogService Worklogs { get; }
 
     public BarViewModel Bar { get; }
+
+    public IssueTypeIcons Icons { get; }
 
     public bool IsExiting { get; private set; }
 
@@ -124,6 +127,7 @@ public sealed class AppController : IDisposable
         _http = null;
         Client = null;
         _priorities = null;
+        Icons.Reset();
 
         if (_credentials is null || TrySite() is not { } site) return;
 

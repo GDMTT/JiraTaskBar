@@ -7,13 +7,17 @@ A small always-on-top bar with one button per Jira ticket for one-click time tra
 | Action | Result |
 |---|---|
 | **Click** a ticket | Starts its timer. Clicking another ticket switches to it, and clicking the running ticket stops it. Each stop posts a Jira worklog. |
-| **Hover** | Shows the key, title, type, priority and status. |
+| **Hover** | Shows the work-type icon and key, then the title, type, priority and status. |
 | **Right-click** | Opens the comment editor. |
 | **Middle-click** or the ↗ icon | Opens the ticket in your browser. |
 | **Drag the grip** (top/left dots) | Moves the bar. Dropping it near any screen edge docks it, and other windows make room like they do for the taskbar. Dragging it away undocks it. |
 | **⋯ menu / tray icon** | Refresh, stop timer, dock (Floating / Left / Top / Right / Bottom), show/hide, settings, start with Windows, exit. |
 
 By default the bar, its tooltips and its menus are **hidden from screen sharing, screenshots and recordings**. You still see them, but people on a Teams or Zoom share don't. You can turn this off in Settings, or set the bar to show only ticket keys.
+
+Each button shows the ticket's **work-type icon**, the same one Jira shows, including custom types:
+- Icons are fetched once per session from your Jira site. A scoped token fetches them through the API gateway.
+- Only real PNG images are used. If an icon can't be loaded, for example because a scoped token isn't allowed to read avatars, the button shows a matching built-in glyph instead (Incident, Change, Problem, Service request and so on).
 
 Buttons are sorted by Jira priority (priority 1 first) and then by key. The coloured strip on each button shows its priority. A ⚠ icon means some worklogs couldn't be posted yet. They are retried automatically, or you can click the icon to retry or discard them.
 

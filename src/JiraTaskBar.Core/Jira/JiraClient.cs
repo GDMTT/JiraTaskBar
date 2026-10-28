@@ -14,6 +14,8 @@ public interface IJiraClient
     Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default);
     /// <returns>The filename Jira stored the attachment under.</returns>
     Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default);
+    /// <summary>The issue type's icon as PNG bytes, or null if Jira didn't return a usable PNG.</summary>
+    Task<byte[]?> GetIssueTypeIconAsync(string avatarId, CancellationToken ct = default);
 }
 
 /// <summary>Jira Cloud REST client using email + API token (Basic auth).</summary>
@@ -149,6 +151,33 @@ public sealed class JiraClient : IJiraClient
         return (node as JsonArray)?.FirstOrDefault()?["filename"]?.GetValue<string>() ?? Path.GetFileName(filePath);
     }
 
+    /// <summary>Largest icon accepted; Jira's are a few KB.</summary>
+    private const int MaxIconBytes = 256 * 1024;
+    private static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    public Task<byte[]?> GetIssueTypeIconAsync(string avatarId, CancellationToken ct = default)
+    {
+        // Built from the ID (digits only) against our own API base, never from a URL in the response,
+        // so credentials only go to the Jira site / Atlassian gateway.
+        if (!JiraPayloads.IsAvatarId(avatarId))
+            throw new ArgumentException("Avatar IDs are numeric.", nameof(avatarId));
+        var url = $"rest/api/3/universal_avatar/view/type/issuetype/avatar/{avatarId}?size=medium&format=png";
+        return SendWithRetryAsync(() => new HttpRequestMessage(HttpMethod.Get, url), ReadPngAsync, ct);
+    }
+
+    private static async Task<byte[]?> ReadPngAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (!response.IsSuccessStatusCode)
+        {
+            await ReadResponseAsync(response, ct); // throws JiraApiException with Jira's message
+            return null;
+        }
+        if (response.Content.Headers.ContentLength > MaxIconBytes) return null;
+        var bytes = await response.Content.ReadAsByteArrayAsync(ct);
+        // Only real PNGs are handed to the image decoder (Jira may answer with SVG, which WPF can't show).
+        return bytes.Length <= MaxIconBytes && bytes.AsSpan().StartsWith(PngSignature) ? bytes : null;
+    }
+
     private Task<JsonNode?> SendAsync(HttpMethod method, string url, JsonNode? body, CancellationToken ct)
     {
         var json = body?.ToJsonString();
@@ -165,7 +194,11 @@ public sealed class JiraClient : IJiraClient
     /// Sends a request built by <paramref name="createRequest"/> (a request can only be sent once,
     /// so retries build a fresh one). Throttled responses (429/503) are retried with back-off.
     /// </summary>
-    private async Task<JsonNode?> SendRequestAsync(Func<HttpRequestMessage> createRequest, CancellationToken ct)
+    private Task<JsonNode?> SendRequestAsync(Func<HttpRequestMessage> createRequest, CancellationToken ct) =>
+        SendWithRetryAsync(createRequest, ReadResponseAsync, ct);
+
+    private async Task<T> SendWithRetryAsync<T>(Func<HttpRequestMessage> createRequest,
+        Func<HttpResponseMessage, CancellationToken, Task<T>> readResponse, CancellationToken ct)
     {
         for (var attempt = 0; ; attempt++)
         {
@@ -177,7 +210,7 @@ public sealed class JiraClient : IJiraClient
                 await _delay(RetryDelay(response, attempt), ct);
                 continue;
             }
-            return await ReadResponseAsync(response, ct);
+            return await readResponse(response, ct);
         }
     }
 
