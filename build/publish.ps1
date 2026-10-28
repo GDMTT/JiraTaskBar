@@ -27,6 +27,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
+$Output = [IO.Path]::GetFullPath($Output)
+# Start clean so files from an older publish (e.g. stale .pdb/.xml) never ship.
+if (Test-Path $Output) { Remove-Item $Output -Recurse -Force }
 
 Write-Host '== Restore (locked) and test' -ForegroundColor Cyan
 dotnet restore $root --locked-mode
@@ -35,8 +38,10 @@ dotnet test $root -c Release --no-restore
 if ($LASTEXITCODE) { throw 'Tests failed.' }
 
 Write-Host '== Publish' -ForegroundColor Cyan
+# One compressed exe: symbols embedded (readable crash stacks), no package XML docs alongside.
 dotnet publish (Join-Path $root 'src\JiraTaskBar.App') -c Release -r $Runtime --self-contained `
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:ContinuousIntegrationBuild=true `
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
+    -p:DebugType=embedded -p:AllowedReferenceRelatedFileExtensions=none -p:ContinuousIntegrationBuild=true `
     -o $Output
 if ($LASTEXITCODE) { throw 'Publish failed.' }
 

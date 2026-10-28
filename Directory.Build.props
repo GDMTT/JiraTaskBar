@@ -5,6 +5,14 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
 
+    <!--
+      Releases are published as a win-x64 single-file exe (build/publish.ps1). Publishing adds the
+      runtime identifier and the single-file analyzer (Microsoft.NET.ILLink.Tasks) to restore, so
+      declare both for every build: the lock files then match normal builds and release publishes.
+    -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+
     <!-- Check direct and transitive packages against the GitHub Advisory Database on restore. -->
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>all</NuGetAuditMode>
