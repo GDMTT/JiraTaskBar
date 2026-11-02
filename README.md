@@ -67,6 +67,10 @@ The comment preview uses the Microsoft Edge WebView2 runtime, which comes with W
 ```
 This runs a locked restore and the tests, then publishes a self-contained single exe to `artifacts/publish`, signs it, and writes a SHA-256 file next to it. Without a certificate it builds unsigned and warns. Install the result under `%ProgramFiles%` so other processes can't replace the exe.
 
+GitHub Actions runs locked restore, warning-free Release build, and all tests for pushes and pull requests. It also uploads an unsigned `JiraTaskBar.exe` and SHA-256 checksum as a workflow artifact. Pushing a tag whose name starts with `v` (for example `v1.1.0`) runs the release workflow and attaches those files to a GitHub Release. Use **Run workflow** on the Actions page to test packaging without creating a release.
+
+CI binaries are unsigned until a managed code-signing certificate is configured. Treat the workflow artifact as a test build rather than a production installer until signing is enabled.
+
 ### Package supply chain
 - `nuget.config` uses nuget.org only, with package source mapping, and requires nuget.org's repository signature on every package. The machine-level NuGet config has no sources; if IT mandates an internal feed, switch to it here.
 - `packages.lock.json` pins exact versions and hashes. After changing a package, run `dotnet restore --force-evaluate` and commit the updated lock files.

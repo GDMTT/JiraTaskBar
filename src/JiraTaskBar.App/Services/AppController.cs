@@ -48,13 +48,21 @@ public sealed class AppController : IDisposable
         Settings = _settingsStore.Load() ?? new AppSettings();
         _credentials = LoadCredentials();
         Tracker = new TimeTracker(new JsonFileStore<TrackerState>(AppPaths.File("state.json")), TimeProvider.System);
+        ContextHistory = new ContextSwitchHistory(
+            new JsonFileStore<ContextSwitchHistoryState>(AppPaths.File("context-switch-history.json")));
         Worklogs = new WorklogService(() => Client,
             new WorklogQueue(new JsonFileStore<List<PendingWorklog>>(AppPaths.File("pending-worklogs.json"))),
             () => Settings.ShortSessions);
         Icons = new IssueTypeIcons(() => Client);
         Bar = new BarViewModel(this);
 
-        Tracker.SessionCompleted += (_, session) => TrackWorklog(PostWorklogAsync(session));
+        Tracker.SessionCompleted += (_, session) =>
+        {
+            ContextHistory.Record(session);
+            TrackWorklog(PostWorklogAsync(session));
+        };
+        Tracker.Transitioned += (_, transition) =>
+            ContextHistory.RecordSwitch(transition.PreviousKey, transition.CurrentKey, transition.OccurredUtc);
         Tracker.Changed += (_, _) =>
         {
             Bar.SyncActive();
@@ -68,6 +76,8 @@ public sealed class AppController : IDisposable
     public IJiraClient? Client { get; private set; }
 
     public TimeTracker Tracker { get; }
+
+    public ContextSwitchHistory ContextHistory { get; }
 
     public WorklogService Worklogs { get; }
 

@@ -48,9 +48,15 @@
                   Width="{Binding DataContext.ButtonWidth, RelativeSource={RelativeSource AncestorType=Window}}">
                 <ui:Button Style="{StaticResource TicketButtonStyle}" Command="{Binding ToggleCommand}">
                     <ui:Button.InputBindings>
-                        <MouseBinding MouseAction="RightClick" Command="{Binding CommentCommand}" />
                         <MouseBinding MouseAction="MiddleClick" Command="{Binding OpenInBrowserCommand}" />
                     </ui:Button.InputBindings>
+                    <ui:Button.ContextMenu>
+                        <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                            <MenuItem Header="Add comment…" Command="{Binding CommentCommand}" />
+                            <Separator />
+                            <MenuItem Header="Open in Jira" Command="{Binding OpenInBrowserCommand}" />
+                        </ContextMenu>
+                    </ui:Button.ContextMenu>
                     <ui:Button.ToolTip>
                         <ToolTip MaxWidth="380">
                             <StackPanel>
@@ -62,7 +68,7 @@
                                 <TextBlock Margin="0,2,0,0" Text="{Binding Summary}" TextWrapping="Wrap" />
                                 <TextBlock Margin="0,4,0,0" Opacity="0.75" Text="{Binding MetaLine}" />
                                 <TextBlock Margin="0,6,0,0" FontSize="11" Opacity="0.6"
-                                           Text="Click: start/stop timer · Right-click: comment · Middle-click: open in browser" />
+                                           Text="Click: start/stop timer · Right-click: ticket menu · Middle-click: open in browser" />
                             </StackPanel>
                         </ToolTip>
                     </ui:Button.ToolTip>
