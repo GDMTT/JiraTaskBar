@@ -21,16 +21,18 @@ public sealed partial class TicketViewModel : ObservableObject
     private readonly Action<TicketViewModel> _open;
     private readonly Action<TicketViewModel> _comment;
     private readonly Func<bool> _showTitles;
+    private readonly Func<bool> _canComment;
 
     /// <param name="showTitles">Whether the summary appears on the button (it is always in the tooltip).</param>
     public TicketViewModel(JiraIssue issue, Action<TicketViewModel> toggle, Action<TicketViewModel> open,
-        Action<TicketViewModel> comment, Func<bool>? showTitles = null)
+        Action<TicketViewModel> comment, Func<bool>? showTitles = null, Func<bool>? canComment = null)
     {
         _issue = issue;
         _toggle = toggle;
         _open = open;
         _comment = comment;
         _showTitles = showTitles ?? (() => true);
+        _canComment = canComment ?? (() => true);
     }
 
     public static JiraIssue Placeholder(string key) => new(key, "(not in the current ticket query)", null, string.Empty, string.Empty, string.Empty);
@@ -94,8 +96,12 @@ public sealed partial class TicketViewModel : ObservableObject
     [RelayCommand]
     private void OpenInBrowser() => _open(this);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanComment))]
     private void Comment() => _comment(this);
+
+    private bool CanComment() => _canComment();
+
+    public void RefreshConnectionState() => CommentCommand.NotifyCanExecuteChanged();
 
     private static Brush Frozen(byte r, byte g, byte b)
     {

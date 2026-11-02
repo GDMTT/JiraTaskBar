@@ -40,6 +40,7 @@ public sealed class AppController : IDisposable
     private DateTimeOffset _lastHeartbeat;
     private DateTimeOffset? _awaySinceUtc;
     private bool _awayPromptOpen;
+    private bool _contextHistoryVersionWarningLogged;
     private StoredCredentials? _credentials;
 
     public AppController(Application app)
@@ -58,11 +59,12 @@ public sealed class AppController : IDisposable
 
         Tracker.SessionCompleted += (_, session) =>
         {
-            ContextHistory.Record(session);
             TrackWorklog(PostWorklogAsync(session));
+            TrySaveContextHistory(() => ContextHistory.Record(session));
         };
         Tracker.Transitioned += (_, transition) =>
-            ContextHistory.RecordSwitch(transition.PreviousKey, transition.CurrentKey, transition.OccurredUtc);
+            TrySaveContextHistory(() =>
+                ContextHistory.RecordSwitch(transition.PreviousKey, transition.CurrentKey, transition.OccurredUtc));
         Tracker.Changed += (_, _) =>
         {
             Bar.SyncActive();
@@ -136,6 +138,7 @@ public sealed class AppController : IDisposable
         _http?.Dispose();
         _http = null;
         Client = null;
+        Bar.RefreshConnectionState();
         _priorities = null;
         Icons.Reset();
 
@@ -150,6 +153,33 @@ public sealed class AppController : IDisposable
         catch (ArgumentException ex)
         {
             Log.Error("Stored credentials are invalid", ex);
+        }
+        finally
+        {
+            Bar.RefreshConnectionState();
+        }
+    }
+
+    /// <summary>Analytics history is best-effort and must never interrupt timers or worklog delivery.</summary>
+    private void TrySaveContextHistory(Action save)
+    {
+        if (!ContextHistory.IsWritable)
+        {
+            if (!_contextHistoryVersionWarningLogged)
+            {
+                Log.Error("Context-switch history was created by an unsupported version; history recording is disabled and the file was preserved");
+                _contextHistoryVersionWarningLogged = true;
+            }
+            return;
+        }
+
+        try
+        {
+            save();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Could not save context-switch history; time tracking will continue", ex);
         }
     }
 

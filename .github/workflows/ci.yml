@@ -31,15 +31,18 @@ jobs:
       - name: Build
         run: dotnet build JiraTaskBar.slnx --configuration Release --no-restore --warnaserror
 
-      - name: Test
-        run: dotnet test JiraTaskBar.slnx --configuration Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory artifacts/test-results
+      - name: Test core
+        run: dotnet test tests/JiraTaskBar.Core.Tests/JiraTaskBar.Core.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=core.trx" --results-directory artifacts/test-results/core
+
+      - name: Test application
+        run: dotnet test tests/JiraTaskBar.App.Tests/JiraTaskBar.App.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=app.trx" --results-directory artifacts/test-results/app
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: artifacts/test-results/*.trx
+          path: artifacts/test-results/**/*.trx
           if-no-files-found: warn
 
       - name: Publish release binary
