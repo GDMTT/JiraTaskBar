@@ -53,6 +53,30 @@ public class TimeTrackerTests : IDisposable
     }
 
     [Fact]
+    public void Selecting_another_issue_reports_one_direct_transition()
+    {
+        var tracker = NewTracker();
+        var transitions = new List<ActiveTicketTransition>();
+        tracker.Transitioned += (_, transition) => transitions.Add(transition);
+
+        tracker.Start("ABC-1");
+        _time.Advance(TimeSpan.FromMinutes(10));
+        tracker.Start("ABC-2");
+
+        Assert.Collection(transitions,
+            first =>
+            {
+                Assert.Null(first.PreviousKey);
+                Assert.Equal("ABC-1", first.CurrentKey);
+            },
+            second =>
+            {
+                Assert.Equal("ABC-1", second.PreviousKey);
+                Assert.Equal("ABC-2", second.CurrentKey);
+            });
+    }
+
+    [Fact]
     public void Running_session_is_offered_for_recovery_after_restart()
     {
         var tracker = NewTracker();
@@ -115,6 +139,46 @@ public class TimeTrackerTests : IDisposable
         Assert.Equal(TimeSpan.FromMinutes(20), first.Duration);
         Assert.Equal("ABC-1", tracker.ActiveKey);
         Assert.Equal(TimeSpan.Zero, tracker.Elapsed);
+    }
+}
+
+public class ContextSwitchHistoryTests : IDisposable
+{
+    private readonly TempDir _dir = new();
+
+    public void Dispose() => _dir.Dispose();
+
+    [Fact]
+    public void Persists_intervals_and_only_direct_ticket_switches()
+    {
+        var store = new JsonFileStore<ContextSwitchHistoryState>(_dir.File("context.json"));
+        var history = new ContextSwitchHistory(store);
+        var start = new DateTimeOffset(2026, 11, 3, 8, 0, 0, TimeSpan.Zero);
+
+        history.Record(new CompletedSession("ABC-1", start, start.AddMinutes(12)));
+        history.RecordSwitch(null, "ABC-1", start);
+        history.RecordSwitch("ABC-1", "ABC-2", start.AddMinutes(12));
+        history.RecordSwitch("ABC-2", null, start.AddMinutes(20));
+
+        var reloaded = new ContextSwitchHistory(store);
+        Assert.Equal(TimeSpan.FromMinutes(12), Assert.Single(reloaded.Intervals).Duration);
+        var contextSwitch = Assert.Single(reloaded.Switches);
+        Assert.Equal("ABC-1", contextSwitch.FromKey);
+        Assert.Equal("ABC-2", contextSwitch.ToKey);
+    }
+
+    [Fact]
+    public void Clear_removes_local_history()
+    {
+        var store = new JsonFileStore<ContextSwitchHistoryState>(_dir.File("context.json"));
+        var history = new ContextSwitchHistory(store);
+        var now = DateTimeOffset.UtcNow;
+        history.Record(new CompletedSession("ABC-1", now, now.AddMinutes(1)));
+        history.Clear();
+
+        var reloaded = new ContextSwitchHistory(store);
+        Assert.Empty(reloaded.Intervals);
+        Assert.Empty(reloaded.Switches);
     }
 }
 

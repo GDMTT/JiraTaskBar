@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: windows-2025
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore locked dependencies
+        run: dotnet restore JiraTaskBar.slnx --locked-mode
+
+      - name: Build
+        run: dotnet build JiraTaskBar.slnx --configuration Release --no-restore --warnaserror
+
+      - name: Test
+        run: dotnet test JiraTaskBar.slnx --configuration Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory artifacts/test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: artifacts/test-results/*.trx
+          if-no-files-found: warn
+
+      - name: Publish release binary
+        shell: pwsh
+        run: ./build/publish.ps1 -Output artifacts/publish
+
+      - name: Upload release binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: JiraTaskBar-win-x64
+          path: |
+            artifacts/publish/JiraTaskBar.exe
+            artifacts/publish/JiraTaskBar.exe.sha256
+          if-no-files-found: error

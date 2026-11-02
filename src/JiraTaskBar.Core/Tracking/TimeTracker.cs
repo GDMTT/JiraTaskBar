@@ -16,6 +16,8 @@ public sealed class TrackerState
 
 public enum RecoveryChoice { KeepRunning, LogUntilLastSeen, Discard }
 
+public sealed record ActiveTicketTransition(string? PreviousKey, string? CurrentKey, DateTimeOffset OccurredUtc);
+
 /// <summary>
 /// Tracks time against at most one issue. Every change is persisted so a running timer
 /// survives a crash or restart (surfaced through <see cref="PendingRecovery"/>).
@@ -44,6 +46,9 @@ public sealed class TimeTracker
     /// <summary>Raised whenever the active issue changes.</summary>
     public event EventHandler? Changed;
 
+    /// <summary>Raised with the previous and current ticket whenever the active ticket changes.</summary>
+    public event EventHandler<ActiveTicketTransition>? Transitioned;
+
     /// <summary>Raised for each finished session; the subscriber posts the worklog.</summary>
     public event EventHandler<CompletedSession>? SessionCompleted;
 
@@ -61,14 +66,23 @@ public sealed class TimeTracker
     public void Start(string key)
     {
         if (string.Equals(Active?.Key, key, StringComparison.OrdinalIgnoreCase)) return;
+        var previous = Active?.Key;
         StopCore(null, raiseChanged: false);
         var now = Now;
         Active = new ActiveSession(key, now, now);
         Persist();
+        Transitioned?.Invoke(this, new ActiveTicketTransition(previous, key, now));
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public CompletedSession? Stop(DateTimeOffset? endUtc = null) => StopCore(endUtc, raiseChanged: true);
+    public CompletedSession? Stop(DateTimeOffset? endUtc = null)
+    {
+        var previous = Active?.Key;
+        var completed = StopCore(endUtc, raiseChanged: true);
+        if (completed is not null)
+            Transitioned?.Invoke(this, new ActiveTicketTransition(previous, null, completed.EndedUtc));
+        return completed;
+    }
 
     /// <summary>Records that the app is alive, so a crash can be logged up to the last-seen time.</summary>
     public void Heartbeat()
