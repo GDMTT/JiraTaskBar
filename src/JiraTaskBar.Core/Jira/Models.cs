@@ -21,6 +21,14 @@ public sealed record JiraIssue(
 
 public sealed record JiraUser(string AccountId, string DisplayName, string? EmailAddress);
 
+public sealed record JiraWorklog(
+    string Id,
+    string IssueKey,
+    DateTimeOffset Started,
+    int TimeSpentSeconds,
+    string Author,
+    string? Comment);
+
 /// <param name="SiteUrl">The Jira site, used for browser links (and for REST calls with a classic token).</param>
 /// <param name="CloudId">
 /// Set for a <b>scoped</b> API token: REST calls then go through Atlassian's API gateway

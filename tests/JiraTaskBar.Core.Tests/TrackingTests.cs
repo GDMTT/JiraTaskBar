@@ -200,6 +200,30 @@ public class ContextSwitchHistoryTests : IDisposable
         Assert.Equal(original, File.ReadAllText(path));
         Assert.Equal("ABC-9", Assert.Single(history.Intervals).Key);
     }
+
+    [Fact]
+    public void Report_clips_intervals_and_groups_tickets_and_transitions()
+    {
+        var store = new JsonFileStore<ContextSwitchHistoryState>(_dir.File("context.json"));
+        var history = new ContextSwitchHistory(store);
+        var day = new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.Zero);
+        history.Record(new CompletedSession("ABC-1", day.AddMinutes(-10), day.AddMinutes(20)));
+        history.Record(new CompletedSession("abc-1", day.AddHours(1), day.AddHours(1.5)));
+        history.Record(new CompletedSession("ABC-2", day.AddHours(2), day.AddHours(2.25)));
+        history.RecordSwitch("ABC-1", "ABC-2", day.AddHours(2));
+        history.RecordSwitch("abc-1", "abc-2", day.AddHours(2.5));
+
+        var report = history.BuildReport(day, day.AddHours(3));
+
+        Assert.Equal(2, report.SwitchCount);
+        Assert.Equal(3, report.IntervalCount);
+        Assert.Equal(TimeSpan.FromMinutes(65), report.TotalActive);
+        var abc1 = Assert.Single(report.Tickets, t => t.Key.Equals("ABC-1", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(2, abc1.Intervals);
+        Assert.Equal(TimeSpan.FromMinutes(50), abc1.Total);
+        var transition = Assert.Single(report.Transitions, t => t.FromKey.Equals("ABC-1", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(2, transition.Count);
+    }
 }
 
 public class WorklogTests : IDisposable

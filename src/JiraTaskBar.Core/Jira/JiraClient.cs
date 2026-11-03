@@ -10,6 +10,7 @@ public interface IJiraClient
     Task<JiraUser> GetMyselfAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
+    Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
     Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
     Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default);
     /// <returns>The filename Jira stored the attachment under.</returns>
@@ -23,6 +24,7 @@ public sealed class JiraClient : IJiraClient
 {
     private const string SearchFields = "summary,priority,status,project,issuetype";
     private const int MaxIssues = 200;
+    private const int MaxWorklogs = 1000;
     /// <summary>Retries after HTTP 429/503 before giving up (worklogs are then queued for later).</summary>
     public const int MaxThrottleRetries = 3;
     private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(60);
@@ -127,6 +129,23 @@ public sealed class JiraClient : IJiraClient
     public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Post, $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog",
             JiraPayloads.Worklog(startedLocal, timeSpentSeconds, comment), ct);
+
+    public async Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default)
+    {
+        var key = Uri.EscapeDataString(issueKey);
+        var all = new List<JiraWorklog>();
+        var startAt = 0;
+        while (all.Count < MaxWorklogs)
+        {
+            var node = await SendAsync(HttpMethod.Get,
+                $"rest/api/3/issue/{key}/worklog?startAt={startAt}&maxResults=100", null, ct);
+            var page = JiraPayloads.ParseWorklogs(node, issueKey);
+            all.AddRange(page.Worklogs);
+            startAt += page.Worklogs.Count;
+            if (page.Worklogs.Count == 0 || startAt >= page.Total) break;
+        }
+        return all;
+    }
 
     public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Post, $"rest/api/2/issue/{Uri.EscapeDataString(issueKey)}/comment",

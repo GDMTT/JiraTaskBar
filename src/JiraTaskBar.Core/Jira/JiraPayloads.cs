@@ -111,6 +111,52 @@ public static class JiraPayloads
         return (issues, next);
     }
 
+    public static (IReadOnlyList<JiraWorklog> Worklogs, int Total) ParseWorklogs(JsonNode? node, string issueKey)
+    {
+        var result = new List<JiraWorklog>();
+        foreach (var item in node?["worklogs"] as JsonArray ?? [])
+        {
+            if (item is null) continue;
+            var startedText = item["started"]?.GetValue<string>();
+            if (!DateTimeOffset.TryParse(startedText, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AllowWhiteSpaces, out var started)) continue;
+            result.Add(new JiraWorklog(
+                item["id"]?.GetValue<string>() ?? string.Empty,
+                issueKey,
+                started,
+                item["timeSpentSeconds"]?.GetValue<int>() ?? 0,
+                item["author"]?["displayName"]?.GetValue<string>() ?? string.Empty,
+                AdfText(item["comment"])));
+        }
+        return (result, node?["total"]?.GetValue<int>() ?? result.Count);
+    }
+
+    private static string? AdfText(JsonNode? node)
+    {
+        if (node is null) return null;
+        var parts = new List<string>();
+        CollectText(node, parts);
+        var text = string.Join(" ", parts.Where(p => p.Length > 0));
+        return text.Length == 0 ? null : text;
+    }
+
+    private static void CollectText(JsonNode node, List<string> parts)
+    {
+        if (node is JsonObject obj)
+        {
+            if (obj["type"]?.GetValue<string>() == "text" && obj["text"]?.GetValue<string>() is { } text)
+                parts.Add(text);
+            if (obj["content"] is JsonArray content)
+                foreach (var child in content)
+                    if (child is not null) CollectText(child, parts);
+        }
+        else if (node is JsonValue value && value.TryGetValue<string>(out var plain))
+        {
+            // Jira v2/server responses may contain a plain string rather than ADF.
+            parts.Add(plain);
+        }
+    }
+
     /// <summary>
     /// The issue type's avatar ID: the "avatarId" field (a number), or the ID inside its
     /// ".../universal_avatar/view/type/issuetype/avatar/{id}" icon URL. Only digits are accepted.
