@@ -22,20 +22,26 @@ public sealed class ContextSwitchHistoryState
 /// </summary>
 public sealed class ContextSwitchHistory
 {
+    public const int CurrentVersion = 1;
+
     private readonly JsonFileStore<ContextSwitchHistoryState> _store;
     private ContextSwitchHistoryState _state;
 
     public ContextSwitchHistory(JsonFileStore<ContextSwitchHistoryState> store)
     {
         _store = store;
-        _state = store.Load() is { Version: 1 } loaded ? loaded : new ContextSwitchHistoryState();
+        _state = store.Load() ?? new ContextSwitchHistoryState();
     }
 
     public IReadOnlyList<ContextInterval> Intervals => _state.Intervals;
     public IReadOnlyList<ContextSwitch> Switches => _state.Switches;
 
+    /// <summary>False when the file was written by a newer or otherwise unsupported schema.</summary>
+    public bool IsWritable => _state.Version == CurrentVersion;
+
     public void Record(CompletedSession session)
     {
+        EnsureWritable();
         var end = session.EndedUtc < session.StartedUtc ? session.StartedUtc : session.EndedUtc;
         _state.Intervals.Add(new ContextInterval(session.Key, session.StartedUtc, end));
         Save();
@@ -46,6 +52,7 @@ public sealed class ContextSwitchHistory
         if (string.IsNullOrWhiteSpace(fromKey) || string.IsNullOrWhiteSpace(toKey) ||
             fromKey.Equals(toKey, StringComparison.OrdinalIgnoreCase)) return;
 
+        EnsureWritable();
         _state.Switches.Add(new ContextSwitch(fromKey, toKey, occurredUtc));
         Save();
     }
@@ -57,4 +64,11 @@ public sealed class ContextSwitchHistory
     }
 
     private void Save() => _store.Save(_state);
+
+    private void EnsureWritable()
+    {
+        if (!IsWritable)
+            throw new NotSupportedException(
+                $"Context-switch history version {_state.Version} is not supported by this version of JiraTaskBar.");
+    }
 }

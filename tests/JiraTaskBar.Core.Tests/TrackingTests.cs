@@ -180,6 +180,26 @@ public class ContextSwitchHistoryTests : IDisposable
         Assert.Empty(reloaded.Intervals);
         Assert.Empty(reloaded.Switches);
     }
+
+    [Fact]
+    public void Unsupported_version_is_preserved_and_refuses_implicit_writes()
+    {
+        var path = _dir.File("context.json");
+        var store = new JsonFileStore<ContextSwitchHistoryState>(path);
+        store.Save(new ContextSwitchHistoryState
+        {
+            Version = ContextSwitchHistory.CurrentVersion + 1,
+            Intervals = [new ContextInterval("ABC-9", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)],
+        });
+        var original = File.ReadAllText(path);
+        var history = new ContextSwitchHistory(store);
+
+        Assert.False(history.IsWritable);
+        Assert.Throws<NotSupportedException>(() =>
+            history.Record(new CompletedSession("ABC-1", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)));
+        Assert.Equal(original, File.ReadAllText(path));
+        Assert.Equal("ABC-9", Assert.Single(history.Intervals).Key);
+    }
 }
 
 public class WorklogTests : IDisposable

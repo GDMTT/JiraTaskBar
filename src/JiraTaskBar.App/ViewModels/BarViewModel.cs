@@ -114,6 +114,12 @@ public sealed partial class BarViewModel : ObservableObject
         foreach (var t in Tickets) t.RefreshSubtitle();
     }
 
+    /// <summary>Refreshes commands whose availability depends on the Jira connection.</summary>
+    public void RefreshConnectionState()
+    {
+        foreach (var t in Tickets) t.RefreshConnectionState();
+    }
+
     private void Rebuild()
     {
         var activeKey = _app.Tracker.ActiveKey;
@@ -171,7 +177,8 @@ public sealed partial class BarViewModel : ObservableObject
             toggle: t => _app.ToggleTimer(t.Key),
             open: t => _app.OpenInBrowser(t.Key),
             comment: t => _app.OpenCommentEditor(t),
-            showTitles: () => _app.Settings.ShowTitlesOnBar);
+            showTitles: () => _app.Settings.ShowTitlesOnBar,
+            canComment: () => _app.Client is not null);
         _byKey[issue.Key] = vm;
         return vm;
     }
