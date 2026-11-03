@@ -1,0 +1,77 @@
+<ui:FluentWindow x:Class="JiraTaskBar.App.Views.ContextReportWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="Context switching"
+                 Width="760" Height="600" MinWidth="620" MinHeight="440"
+                 WindowStartupLocation="CenterScreen"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica"
+                 WindowCornerPreference="Round">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Title="Context switching" />
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="20,8,20,12">
+            <TextBlock Text="From" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <DatePicker x:Name="FromDate" Width="130" SelectedDateChanged="Date_Changed" />
+            <TextBlock Text="To" VerticalAlignment="Center" Margin="16,0,6,0" />
+            <DatePicker x:Name="ToDate" Width="130" SelectedDateChanged="Date_Changed" />
+            <ui:Button Margin="16,0,0,0" Content="Last 7 days" Click="LastWeek_Click" />
+        </StackPanel>
+
+        <UniformGrid Grid.Row="2" Columns="4" Margin="20,0,20,14">
+            <Border Padding="10" Margin="0,0,6,0" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" CornerRadius="6">
+                <StackPanel><TextBlock Text="Switches" Opacity="0.7" /><TextBlock x:Name="SwitchCount" FontSize="22" FontWeight="SemiBold" /></StackPanel>
+            </Border>
+            <Border Padding="10" Margin="2,0,4,0" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" CornerRadius="6">
+                <StackPanel><TextBlock Text="Intervals" Opacity="0.7" /><TextBlock x:Name="IntervalCount" FontSize="22" FontWeight="SemiBold" /></StackPanel>
+            </Border>
+            <Border Padding="10" Margin="4,0,2,0" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" CornerRadius="6">
+                <StackPanel><TextBlock Text="Active time" Opacity="0.7" /><TextBlock x:Name="ActiveTime" FontSize="22" FontWeight="SemiBold" /></StackPanel>
+            </Border>
+            <Border Padding="10" Margin="6,0,0,0" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" CornerRadius="6">
+                <StackPanel><TextBlock Text="Average interval" Opacity="0.7" /><TextBlock x:Name="AverageInterval" FontSize="22" FontWeight="SemiBold" /></StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <Grid Grid.Row="3" Margin="20,0,20,12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="3*" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
+            <GroupBox Header="Time by ticket" Margin="0,0,6,0">
+                <DataGrid x:Name="TicketGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                          HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Ticket" Binding="{Binding Key}" Width="*" />
+                        <DataGridTextColumn Header="Intervals" Binding="{Binding Intervals}" Width="Auto" />
+                        <DataGridTextColumn Header="Total" Binding="{Binding Total}" Width="Auto" />
+                        <DataGridTextColumn Header="Average" Binding="{Binding Average}" Width="Auto" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </GroupBox>
+            <GroupBox Grid.Column="1" Header="Frequent transitions" Margin="6,0,0,0">
+                <DataGrid x:Name="TransitionGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                          HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="From" Binding="{Binding From}" Width="*" />
+                        <DataGridTextColumn Header="To" Binding="{Binding To}" Width="*" />
+                        <DataGridTextColumn Header="Count" Binding="{Binding Count}" Width="Auto" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </GroupBox>
+        </Grid>
+
+        <DockPanel Grid.Row="4" LastChildFill="False" Margin="20,0,20,18">
+            <ui:Button DockPanel.Dock="Left" Appearance="Danger" Content="Delete local history…" Click="Clear_Click" />
+            <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Opacity="0.65"
+                       Text="Stored locally; never sent to Jira or analytics services." />
+            <ui:Button DockPanel.Dock="Right" Content="Close" Click="Close_Click" />
+        </DockPanel>
+    </Grid>
+</ui:FluentWindow>

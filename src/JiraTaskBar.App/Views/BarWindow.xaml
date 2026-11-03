@@ -53,6 +53,7 @@
                     <ui:Button.ContextMenu>
                         <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                             <MenuItem Header="Add comment…" Command="{Binding CommentCommand}" />
+                            <MenuItem Header="View time calendar…" Command="{Binding CalendarCommand}" />
                             <Separator />
                             <MenuItem Header="Open in Jira" Command="{Binding OpenInBrowserCommand}" />
                         </ContextMenu>
