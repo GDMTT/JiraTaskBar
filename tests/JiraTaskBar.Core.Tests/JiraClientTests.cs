@@ -85,6 +85,34 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Worklog_history_is_parsed_and_paginated()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"startAt":0,"maxResults":1,"total":2,"worklogs":[
+              {"id":"10","started":"2026-11-03T09:00:00.000+1300","timeSpentSeconds":900,
+               "author":{"displayName":"Pat"},"comment":{"type":"doc","version":1,"content":[
+                 {"type":"paragraph","content":[{"type":"text","text":"Investigated issue"}]}]}}
+            ]}
+            """);
+        handler.Respond("""
+            {"startAt":1,"maxResults":1,"total":2,"worklogs":[
+              {"id":"11","started":"2026-11-03T10:00:00.000+1300","timeSpentSeconds":1800,
+               "author":{"displayName":"Pat"}}
+            ]}
+            """);
+
+        var worklogs = await client.GetWorklogsAsync("ABC-1");
+
+        Assert.Equal(2, worklogs.Count);
+        Assert.Equal("Investigated issue", worklogs[0].Comment);
+        Assert.Equal(900, worklogs[0].TimeSpentSeconds);
+        Assert.Equal("Pat", worklogs[0].Author);
+        Assert.Equal("/rest/api/3/issue/ABC-1/worklog?startAt=0&maxResults=100", handler.Requests[0].PathAndQuery);
+        Assert.Contains("startAt=1", handler.Requests[1].PathAndQuery);
+    }
+
+    [Fact]
     public void Negative_offsets_are_formatted()
     {
         var value = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.FromHours(-5.5));

@@ -31,12 +31,14 @@ public sealed class AppController : IDisposable
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _refresh = new();
     private readonly Dictionary<string, CommentWindow> _commentWindows = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, WorklogCalendarWindow> _worklogWindows = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Task> _inflightWorklogs = [];
 
     private HttpClient? _http;
     private IReadOnlyList<JiraPriority>? _priorities;
     private TaskbarIcon? _tray;
     private BarWindow? _bar;
+    private ContextReportWindow? _contextReportWindow;
     private DateTimeOffset _lastHeartbeat;
     private DateTimeOffset? _awaySinceUtc;
     private bool _awayPromptOpen;
@@ -285,6 +287,21 @@ public sealed class AppController : IDisposable
         window.ShowNextTo(_bar is null ? IntPtr.Zero : new WindowInteropHelper(_bar).Handle);
     }
 
+    public void OpenWorklogCalendar(TicketViewModel ticket)
+    {
+        if (Client is null) return;
+        if (_worklogWindows.TryGetValue(ticket.Key, out var existing))
+        {
+            existing.Activate();
+            return;
+        }
+
+        var window = new WorklogCalendarWindow(ticket.Issue, Client, () => Worklogs.Pending);
+        _worklogWindows[ticket.Key] = window;
+        window.Closed += (_, _) => _worklogWindows.Remove(ticket.Key);
+        window.Show();
+    }
+
     private async Task PostWorklogAsync(CompletedSession session)
     {
         var result = await Worklogs.LogAsync(session);
@@ -483,6 +500,8 @@ public sealed class AppController : IDisposable
         if (Tracker.Active is { } active)
             menu.Items.Add(Item($"Stop timer ({active.Key})", SymbolRegular.Stop24, () => Tracker.Stop()));
 
+        menu.Items.Add(Item("Context switching…", null, OpenContextReport));
+
         var dock = Item("Dock", SymbolRegular.PanelLeft24, null);
         foreach (var edge in Enum.GetValues<DockEdge>())
         {
@@ -569,6 +588,19 @@ public sealed class AppController : IDisposable
     }
 
     private void OpenSettings() => OpenSettings(message: null);
+
+    private void OpenContextReport()
+    {
+        if (_contextReportWindow is not null)
+        {
+            _contextReportWindow.Activate();
+            return;
+        }
+
+        _contextReportWindow = new ContextReportWindow(ContextHistory);
+        _contextReportWindow.Closed += (_, _) => _contextReportWindow = null;
+        _contextReportWindow.Show();
+    }
 
     /// <summary>Applies the privacy display options: capture exclusion and titles on buttons.</summary>
     private void ApplyDisplaySettings()
@@ -733,6 +765,8 @@ public sealed class AppController : IDisposable
         await Task.WhenAny(Task.WhenAll(inflight), Task.Delay(TimeSpan.FromSeconds(10)));
 
         foreach (var w in _commentWindows.Values.ToList()) w.ForceClose();
+        foreach (var w in _worklogWindows.Values.ToList()) w.Close();
+        _contextReportWindow?.Close();
         _bar?.Close();
         _app.Shutdown();
     }

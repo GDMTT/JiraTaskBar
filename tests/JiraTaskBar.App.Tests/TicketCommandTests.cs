@@ -17,12 +17,14 @@ public class TicketCommandTests
             canComment: () => connected);
 
         Assert.False(ticket.CommentCommand.CanExecute(null));
+        Assert.False(ticket.CalendarCommand.CanExecute(null));
         Assert.False(invoked);
 
         connected = true;
         ticket.RefreshConnectionState();
 
         Assert.True(ticket.CommentCommand.CanExecute(null));
+        Assert.True(ticket.CalendarCommand.CanExecute(null));
         ticket.CommentCommand.Execute(null);
         Assert.True(invoked);
     }
