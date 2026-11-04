@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json.Nodes;
 
 namespace JiraTaskBar.Core.Jira;
@@ -111,10 +112,11 @@ public static class JiraPayloads
         return (issues, next);
     }
 
-    public static (IReadOnlyList<JiraWorklog> Worklogs, int Total) ParseWorklogs(JsonNode? node, string issueKey)
+    public static (IReadOnlyList<JiraWorklog> Worklogs, int Total, int ReturnedCount) ParseWorklogs(JsonNode? node, string issueKey)
     {
         var result = new List<JiraWorklog>();
-        foreach (var item in node?["worklogs"] as JsonArray ?? [])
+        var items = node?["worklogs"] as JsonArray ?? [];
+        foreach (var item in items)
         {
             if (item is null) continue;
             var startedText = item["started"]?.GetValue<string>();
@@ -128,32 +130,47 @@ public static class JiraPayloads
                 item["author"]?["displayName"]?.GetValue<string>() ?? string.Empty,
                 AdfText(item["comment"])));
         }
-        return (result, node?["total"]?.GetValue<int>() ?? result.Count);
+        return (result, node?["total"]?.GetValue<int>() ?? items.Count, items.Count);
     }
 
     private static string? AdfText(JsonNode? node)
     {
         if (node is null) return null;
-        var parts = new List<string>();
-        CollectText(node, parts);
-        var text = string.Join(" ", parts.Where(p => p.Length > 0));
+        var textBuilder = new StringBuilder();
+        CollectText(node, textBuilder);
+        var text = textBuilder.ToString().TrimEnd();
         return text.Length == 0 ? null : text;
     }
 
-    private static void CollectText(JsonNode node, List<string> parts)
+    private static void CollectText(JsonNode node, StringBuilder text)
     {
         if (node is JsonObject obj)
         {
-            if (obj["type"]?.GetValue<string>() == "text" && obj["text"]?.GetValue<string>() is { } text)
-                parts.Add(text);
+            var type = obj["type"]?.GetValue<string>();
+            if (type == "text" && obj["text"]?.GetValue<string>() is { } inline)
+            {
+                text.Append(inline);
+                return;
+            }
+            if (type == "hardBreak")
+            {
+                text.AppendLine();
+                return;
+            }
             if (obj["content"] is JsonArray content)
                 foreach (var child in content)
-                    if (child is not null) CollectText(child, parts);
+                    if (child is not null) CollectText(child, text);
+
+            // Inline text fragments are deliberately concatenated exactly. Only ADF block nodes
+            // introduce line boundaries; formatting marks may split a word across text nodes.
+            if (type is "paragraph" or "heading" or "codeBlock" or "blockquote" or "listItem" &&
+                text.Length > 0 && text[^1] != '\n')
+                text.AppendLine();
         }
         else if (node is JsonValue value && value.TryGetValue<string>(out var plain))
         {
             // Jira v2/server responses may contain a plain string rather than ADF.
-            parts.Add(plain);
+            text.Append(plain);
         }
     }
 

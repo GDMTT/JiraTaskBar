@@ -72,7 +72,7 @@ public sealed class AppController : IDisposable
             Bar.SyncActive();
             UpdateTrayTooltip();
         };
-        Worklogs.QueueChanged += (_, _) => Bar.PendingWorklogs = Worklogs.PendingCount;
+        Worklogs.QueueChanged += (_, _) => RefreshPendingWorklogState();
     }
 
     public AppSettings Settings { get; private set; }
@@ -137,6 +137,9 @@ public sealed class AppController : IDisposable
 
     private void Connect()
     {
+        // Calendar windows retain the client they were opened with. Close them before replacing
+        // and disposing that client so reopening always uses the current connection.
+        foreach (var window in _worklogWindows.Values.ToList()) window.Close();
         _http?.Dispose();
         _http = null;
         Client = null;
@@ -307,6 +310,8 @@ public sealed class AppController : IDisposable
         var result = await Worklogs.LogAsync(session);
         Log.Info($"Worklog {session.Key} {session.Duration} -> {result.Outcome} {result.Error}");
         Bar.PendingWorklogs = Worklogs.PendingCount;
+        if (result.Outcome == WorklogOutcome.Posted)
+            RefreshWorklogCalendars(session.Key);
         if (result.IsAuthFailure)
         {
             ReportAuthFailure();
@@ -317,6 +322,31 @@ public sealed class AppController : IDisposable
                 $"{session.Key}: {BarViewModel.FormatElapsed(session.Duration)} will be retried automatically.\n{result.Error}",
                 NotificationIcon.Warning);
         }
+    }
+
+    private void RefreshWorklogCalendars(string? issueKey = null)
+    {
+        if (!_app.Dispatcher.CheckAccess())
+        {
+            _ = _app.Dispatcher.InvokeAsync(() => RefreshWorklogCalendars(issueKey));
+            return;
+        }
+
+        foreach (var window in _worklogWindows.Values)
+            if (issueKey is null || window.IssueKey.Equals(issueKey, StringComparison.OrdinalIgnoreCase))
+                _ = window.RefreshAsync();
+    }
+
+    private void RefreshPendingWorklogState()
+    {
+        if (!_app.Dispatcher.CheckAccess())
+        {
+            _ = _app.Dispatcher.InvokeAsync(RefreshPendingWorklogState);
+            return;
+        }
+
+        Bar.PendingWorklogs = Worklogs.PendingCount;
+        RefreshWorklogCalendars();
     }
 
     private void TrackWorklog(Task task)

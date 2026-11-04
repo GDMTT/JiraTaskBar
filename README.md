@@ -8,7 +8,7 @@ A small always-on-top bar with one button per Jira ticket for one-click time tra
 |---|---|
 | **Click** a ticket | Starts its timer. Clicking another ticket switches to it, and clicking the running ticket stops it. Each stop posts a Jira worklog. |
 | **Hover** | Shows the work-type icon and key, then the title, type, priority and status. |
-| **Right-click** | Opens the comment editor. |
+| **Right-click** | Opens ticket actions, including adding a comment and reviewing its worklogs. |
 | **Middle-click** or the ↗ icon | Opens the ticket in your browser. |
 | **Drag the grip** (top/left dots) | Moves the bar. Dropping it near any screen edge docks it, and other windows make room like they do for the taskbar. Dragging it away undocks it. |
 | **⋯ menu / tray icon** | Refresh, stop timer, dock (Floating / Left / Top / Right / Bottom), show/hide, settings, start with Windows, exit. |
@@ -32,6 +32,11 @@ Buttons are sorted by Jira priority (priority 1 first) and then by key. The colo
 - The running timer is saved to disk. If the app or PC crashes, you're asked on the next start whether to log the time up to when the app was last seen, keep the timer running, or discard it.
 - If the PC is locked or asleep longer than a set time (10 min by default), you're asked whether to keep that time, remove it, or stop the timer at the moment you left.
 - Sessions under a minute are logged as 1 minute or skipped, depending on a setting.
+
+### Time review and context switching
+- Choose **View time calendar…** from a ticket's right-click menu to review saved Jira worklogs and clearly marked pending local worklogs by day.
+- Choose **Context switching…** from the application or tray menu to review uninterrupted intervals, active time, ticket totals, and direct ticket-to-ticket transitions for a date range.
+- Context history stays in `%LOCALAPPDATA%\JiraTaskBar\context-switch-history.json`; it is never sent to Jira or an analytics service. It is retained until you use **Delete local history…** in the report.
 
 ## Sign-in
 Jira Cloud uses your Atlassian email and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens). Only `https://<name>.atlassian.net` sites are accepted.
@@ -67,7 +72,14 @@ The comment preview uses the Microsoft Edge WebView2 runtime, which comes with W
 ```
 This runs a locked restore and the tests, publishes a self-contained single exe to `artifacts/publish`, optionally signs it, starts the packaged exe in smoke-test mode, and writes a SHA-256 file next to it. The smoke test must exit successfully within 30 seconds and does not require Jira credentials or network access. Without a certificate it builds unsigned and warns. Install the result under `%ProgramFiles%` so other processes can't replace the exe.
 
-GitHub Actions runs locked restore, warning-free Release build, and all tests for pushes and pull requests. On its clean Windows runner it also starts the packaged executable in smoke-test mode, then uploads the unsigned `JiraTaskBar.exe` and SHA-256 checksum as a workflow artifact. Pushing a tag whose name starts with `v` (for example `v1.1.0`) runs the release workflow and attaches those files to a GitHub Release. Use **Run workflow** on the Actions page to test packaging without creating a release.
+GitHub Actions runs locked restore, warning-free Release build, and all tests for pushes and pull requests. On its clean Windows runner it also starts the packaged executable in smoke-test mode, then uploads the unsigned `JiraTaskBar.exe` and SHA-256 checksum as a workflow artifact. Pushing a semantic-version tag (for example `v1.1.0` or `v1.2.0-beta.1`) runs the release workflow, stamps that version into the executable, generates release notes, and attaches the executable and checksum to a GitHub Release. Tags containing a prerelease suffix create a GitHub prerelease. Use **Run workflow** on the Actions page to test packaging without creating a release.
+
+To publish a release from an up-to-date `main` branch:
+
+```powershell
+git tag -a v1.1.0 -m "Jira TaskBar v1.1.0"
+git push origin v1.1.0
+```
 
 CI binaries are unsigned until a managed code-signing certificate is configured. Treat the workflow artifact as a test build rather than a production installer until signing is enabled.
 

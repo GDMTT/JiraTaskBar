@@ -113,6 +113,78 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Worklog_pagination_uses_raw_page_count_when_an_entry_is_invalid()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"startAt":0,"total":3,"worklogs":[
+              {"id":"bad","started":"not-a-date","timeSpentSeconds":10},
+              {"id":"10","started":"2026-11-03T09:00:00Z","timeSpentSeconds":900}
+            ]}
+            """);
+        handler.Respond("""
+            {"startAt":2,"total":3,"worklogs":[
+              {"id":"11","started":"2026-11-03T10:00:00Z","timeSpentSeconds":1800}
+            ]}
+            """);
+
+        var worklogs = await client.GetWorklogsAsync("ABC-1");
+
+        Assert.Equal(["10", "11"], worklogs.Select(w => w.Id));
+        Assert.Contains("startAt=2", handler.Requests[1].PathAndQuery);
+    }
+
+    [Fact]
+    public async Task Worklog_history_is_not_silently_truncated_at_one_thousand()
+    {
+        var (client, handler) = Create();
+        const int total = 1001;
+        for (var start = 0; start < total; start += 100)
+        {
+            var worklogs = new JsonArray();
+            foreach (var id in Enumerable.Range(start, Math.Min(100, total - start)))
+                worklogs.Add(new JsonObject
+                {
+                    ["id"] = id.ToString(),
+                    ["started"] = "2026-11-03T09:00:00Z",
+                    ["timeSpentSeconds"] = 60,
+                });
+            handler.Respond(new JsonObject
+            {
+                ["startAt"] = start,
+                ["total"] = total,
+                ["worklogs"] = worklogs,
+            }.ToJsonString());
+        }
+
+        var result = await client.GetWorklogsAsync("ABC-1");
+
+        Assert.Equal(total, result.Count);
+        Assert.Equal(11, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Adf_worklog_comments_preserve_inline_text_and_separate_blocks()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"total":1,"worklogs":[{
+              "id":"10","started":"2026-11-03T09:00:00Z","timeSpentSeconds":60,
+              "comment":{"type":"doc","content":[
+                {"type":"paragraph","content":[
+                  {"type":"text","text":"--"},{"type":"text","text":"help"},
+                  {"type":"hardBreak"},{"type":"text","text":"next"}]},
+                {"type":"paragraph","content":[{"type":"text","text":"line"}]}
+              ]}
+            }]}
+            """);
+
+        var worklog = Assert.Single(await client.GetWorklogsAsync("ABC-1"));
+
+        Assert.Equal("--help\nnext\nline", worklog.Comment?.Replace("\r\n", "\n"));
+    }
+
+    [Fact]
     public void Negative_offsets_are_formatted()
     {
         var value = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.FromHours(-5.5));

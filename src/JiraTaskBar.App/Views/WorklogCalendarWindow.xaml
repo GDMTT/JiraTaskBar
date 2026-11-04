@@ -20,7 +20,7 @@
         <ui:TitleBar x:Name="WindowTitle" Title="Time calendar" />
 
         <DockPanel Grid.Row="1" Margin="20,8,20,12">
-            <ui:Button DockPanel.Dock="Right" Content="Refresh" Click="Refresh_Click" />
+            <ui:Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="Refresh" Click="Refresh_Click" />
             <StackPanel>
                 <TextBlock x:Name="TicketTitle" FontWeight="SemiBold" FontSize="15" />
                 <TextBlock x:Name="StatusText" Opacity="0.7" Text="Loading Jira worklogs…" />

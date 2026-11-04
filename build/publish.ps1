@@ -14,6 +14,10 @@
 .PARAMETER TimestampUrl
     RFC 3161 timestamp server, so the signature stays valid after the certificate expires.
 
+.PARAMETER Version
+    Optional semantic version to embed in the executable (for example 1.2.0 or 1.2.0-beta.1).
+    Release automation derives this from the Git tag. Local builds use the project version when omitted.
+
 .EXAMPLE
     ./build/publish.ps1
     ./build/publish.ps1 -CertificateThumbprint 0123456789ABCDEF0123456789ABCDEF01234567
@@ -22,12 +26,16 @@ param(
     [string] $CertificateThumbprint,
     [string] $TimestampUrl = 'http://timestamp.digicert.com',
     [string] $Runtime = 'win-x64',
+    [string] $Version,
     [string] $Output = (Join-Path $PSScriptRoot '..\artifacts\publish')
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
 $Output = [IO.Path]::GetFullPath($Output)
+if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
+    throw "Version '$Version' is not a supported semantic version."
+}
 # Start clean so files from an older publish (e.g. stale .pdb/.xml) never ship.
 if (Test-Path $Output) { Remove-Item $Output -Recurse -Force }
 
@@ -39,10 +47,18 @@ if ($LASTEXITCODE) { throw 'Tests failed.' }
 
 Write-Host '== Publish' -ForegroundColor Cyan
 # One compressed exe: symbols embedded (readable crash stacks), no package XML docs alongside.
-dotnet publish (Join-Path $root 'src\JiraTaskBar.App') -c Release -r $Runtime --self-contained `
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
-    -p:DebugType=embedded -p:AllowedReferenceRelatedFileExtensions=none -p:ContinuousIntegrationBuild=true `
-    -o $Output
+$publishArguments = @(
+    'publish', (Join-Path $root 'src\JiraTaskBar.App'),
+    '-c', 'Release', '-r', $Runtime, '--self-contained',
+    '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
+    '-p:EnableCompressionInSingleFile=true', '-p:DebugType=embedded',
+    '-p:AllowedReferenceRelatedFileExtensions=none', '-p:ContinuousIntegrationBuild=true',
+    '-o', $Output
+)
+if ($Version) {
+    $publishArguments += "-p:Version=$Version"
+}
+dotnet @publishArguments
 if ($LASTEXITCODE) { throw 'Publish failed.' }
 
 $exe = Join-Path $Output 'JiraTaskBar.exe'

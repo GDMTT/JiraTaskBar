@@ -224,6 +224,25 @@ public class ContextSwitchHistoryTests : IDisposable
         var transition = Assert.Single(report.Transitions, t => t.FromKey.Equals("ABC-1", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(2, transition.Count);
     }
+
+    [Fact]
+    public void Local_date_boundary_handles_a_midnight_dst_gap()
+    {
+        var start = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 0, 0, 0), 3, 1);
+        var end = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 0, 0, 0), 11, 1);
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+            new DateTime(2026, 1, 1), new DateTime(2026, 12, 31), TimeSpan.FromHours(1), start, end);
+        var zone = TimeZoneInfo.CreateCustomTimeZone(
+            "Test/MidnightGap", TimeSpan.Zero, "Midnight gap", "Standard", "Daylight", [rule]);
+
+        var boundary = LocalDateBoundary.ToUtc(new DateTime(2026, 3, 1), zone);
+        var local = TimeZoneInfo.ConvertTime(boundary, zone);
+
+        Assert.Equal(new DateTime(2026, 3, 1), local.Date);
+        Assert.Equal(1, local.Hour);
+    }
 }
 
 public class WorklogTests : IDisposable

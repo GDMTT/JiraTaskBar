@@ -28,16 +28,15 @@ public partial class ContextReportWindow
 
     private void RefreshReport()
     {
-        if (!IsInitialized || FromDate.SelectedDate is not { } from || ToDate.SelectedDate is not { } to) return;
-        if (to < from)
+        if (!IsInitialized) return;
+        if (FromDate.SelectedDate is not { } from || ToDate.SelectedDate is not { } to || to < from)
         {
-            TicketGrid.ItemsSource = null;
-            TransitionGrid.ItemsSource = null;
+            ClearReport();
             return;
         }
 
-        var fromUtc = LocalMidnightUtc(from);
-        var toUtc = LocalMidnightUtc(to.AddDays(1));
+        var fromUtc = LocalDateBoundary.ToUtc(from, TimeZoneInfo.Local);
+        var toUtc = LocalDateBoundary.ToUtc(to.AddDays(1), TimeZoneInfo.Local);
         var report = _history.BuildReport(fromUtc, toUtc);
         SwitchCount.Text = report.SwitchCount.ToString();
         IntervalCount.Text = report.IntervalCount.ToString();
@@ -60,8 +59,15 @@ public partial class ContextReportWindow
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
-    private static DateTimeOffset LocalMidnightUtc(DateTime date) =>
-        new(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(date.Date, DateTimeKind.Unspecified), TimeZoneInfo.Local), TimeSpan.Zero);
+    private void ClearReport()
+    {
+        SwitchCount.Text = "—";
+        IntervalCount.Text = "—";
+        ActiveTime.Text = "—";
+        AverageInterval.Text = "—";
+        TicketGrid.ItemsSource = null;
+        TransitionGrid.ItemsSource = null;
+    }
 
     private static string Format(TimeSpan value) =>
         $"{(int)value.TotalHours}:{value.Minutes:00}:{value.Seconds:00}";

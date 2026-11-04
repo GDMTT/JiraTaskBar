@@ -23,6 +23,26 @@ public sealed record ContextSwitchReport(
     IReadOnlyList<ContextTicketSummary> Tickets,
     IReadOnlyList<ContextTransitionSummary> Transitions);
 
+public static class LocalDateBoundary
+{
+    /// <summary>
+    /// Returns the earliest UTC instant belonging to a date in <paramref name="timeZone"/>.
+    /// Some zones skip or repeat midnight during a DST transition, so converting midnight
+    /// directly can throw or select the later of two possible instants.
+    /// </summary>
+    public static DateTimeOffset ToUtc(DateTime date, TimeZoneInfo timeZone)
+    {
+        var local = DateTime.SpecifyKind(date.Date, DateTimeKind.Unspecified);
+        while (timeZone.IsInvalidTime(local))
+            local = local.AddMinutes(1);
+
+        var offset = timeZone.IsAmbiguousTime(local)
+            ? timeZone.GetAmbiguousTimeOffsets(local).Max()
+            : timeZone.GetUtcOffset(local);
+        return new DateTimeOffset(local, offset).ToUniversalTime();
+    }
+}
+
 public sealed class ContextSwitchHistoryState
 {
     public int Version { get; set; } = 1;

@@ -11,6 +11,9 @@ public partial class WorklogCalendarWindow
     private readonly IJiraClient _client;
     private readonly Func<IReadOnlyList<PendingWorklog>> _pending;
     private readonly CancellationTokenSource _closed = new();
+    private CancellationTokenSource? _load;
+    private int _loadVersion;
+    private bool _isClosed;
     private IReadOnlyList<JiraWorklog> _worklogs = [];
 
     public WorklogCalendarWindow(JiraIssue issue, IJiraClient client, Func<IReadOnlyList<PendingWorklog>> pending)
@@ -25,24 +28,44 @@ public partial class WorklogCalendarWindow
         DateCalendar.DisplayDate = DateTime.Today;
     }
 
-    private async void Window_Loaded(object sender, RoutedEventArgs e) => await LoadAsync();
-    private async void Refresh_Click(object sender, RoutedEventArgs e) => await LoadAsync();
+    public string IssueKey => _issue.Key;
 
-    private async Task LoadAsync()
+    private async void Window_Loaded(object sender, RoutedEventArgs e) => await RefreshAsync();
+    private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
+
+    public async Task RefreshAsync()
     {
+        if (_isClosed) return;
+        var version = ++_loadVersion;
+        _load?.Cancel();
+        var load = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
+        _load = load;
+        RefreshButton.IsEnabled = false;
         StatusText.Text = "Loading Jira worklogs…";
         try
         {
-            _worklogs = await _client.GetWorklogsAsync(_issue.Key, _closed.Token);
+            var worklogs = await _client.GetWorklogsAsync(_issue.Key, load.Token);
+            if (version != _loadVersion) return;
+            _worklogs = worklogs;
             StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
             RefreshSelectedDay();
         }
-        catch (OperationCanceledException) when (_closed.IsCancellationRequested)
+        catch (OperationCanceledException) when (load.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Could not load worklogs: {ex.Message}";
+            if (version == _loadVersion)
+                StatusText.Text = $"Could not load worklogs: {ex.Message}";
+        }
+        finally
+        {
+            if (version == _loadVersion)
+            {
+                _load = null;
+                RefreshButton.IsEnabled = true;
+            }
+            load.Dispose();
         }
     }
 
@@ -70,7 +93,13 @@ public partial class WorklogCalendarWindow
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
-    private void Window_Closed(object? sender, EventArgs e) => _closed.Cancel();
+    private void Window_Closed(object? sender, EventArgs e)
+    {
+        _isClosed = true;
+        _closed.Cancel();
+        _load?.Cancel();
+        _closed.Dispose();
+    }
 
     private sealed record WorklogRow(DateTimeOffset Started, int Seconds, string Author, string Status, string? Comment);
     private sealed record DisplayRow(string Time, string Duration, string Author, string Status, string Comment);
