@@ -55,6 +55,16 @@ if ($CertificateThumbprint) {
     Write-Warning 'No -CertificateThumbprint given: the exe is UNSIGNED. Sign it before distributing to others.'
 }
 
+Write-Host '== Smoke test packaged executable' -ForegroundColor Cyan
+$process = Start-Process -FilePath $exe -ArgumentList '--smoke-test' -PassThru
+if (-not $process.WaitForExit(30000)) {
+    Stop-Process -Id $process.Id -Force
+    throw 'Packaged executable smoke test timed out after 30 seconds.'
+}
+if ($process.ExitCode -ne 0) {
+    throw "Packaged executable smoke test failed with exit code $($process.ExitCode)."
+}
+
 $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
 Set-Content -Path "$exe.sha256" -Value "$hash  JiraTaskBar.exe"
 Write-Host "Done: $exe`nSHA-256: $hash" -ForegroundColor Green
