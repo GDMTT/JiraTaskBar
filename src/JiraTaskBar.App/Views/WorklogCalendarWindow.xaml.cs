@@ -1,4 +1,9 @@
+using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using JiraTaskBar.App.ViewModels;
 using JiraTaskBar.Core.Jira;
 using JiraTaskBar.Core.Tracking;
@@ -7,25 +12,38 @@ namespace JiraTaskBar.App.Views;
 
 public partial class WorklogCalendarWindow
 {
+    private static readonly Brush GridLine = MakeBrush(0x28, 0x80, 0x80, 0x80);
+    private static readonly Brush TodayFill = MakeBrush(0x24, 0xFF, 0xCC, 0x33);
+    private static readonly Brush WeekendFill = MakeBrush(0x16, 0x80, 0x80, 0x80);
+    private static readonly Brush SavedFill = MakeBrush(0xD8, 0x57, 0x68, 0xE8);
+    private static readonly Brush PendingFill = MakeBrush(0xDF, 0xE6, 0x9F, 0x20);
+
     private readonly JiraIssue _issue;
     private readonly IJiraClient _client;
     private readonly Func<IReadOnlyList<PendingWorklog>> _pending;
     private readonly CancellationTokenSource _closed = new();
+    private readonly int _resolutionMinutes;
     private CancellationTokenSource? _load;
     private int _loadVersion;
     private bool _isClosed;
+    private DateOnly _anchor = DateOnly.FromDateTime(DateTime.Today);
+    private WorklogCalendarView _view = WorklogCalendarView.Week;
     private IReadOnlyList<JiraWorklog> _worklogs = [];
+    private ScrollViewer? _timeScroll;
 
-    public WorklogCalendarWindow(JiraIssue issue, IJiraClient client, Func<IReadOnlyList<PendingWorklog>> pending)
+    public WorklogCalendarWindow(JiraIssue issue, IJiraClient client,
+        Func<IReadOnlyList<PendingWorklog>> pending, int resolutionMinutes = 30)
     {
         InitializeComponent();
         _issue = issue;
         _client = client;
         _pending = pending;
+        _resolutionMinutes = WorklogCalendarLayout.NormalizeResolution(resolutionMinutes);
         WindowTitle.Title = $"Time calendar – {issue.Key}";
         TicketTitle.Text = $"{issue.Key}  {issue.Summary}";
-        DateCalendar.SelectedDate = DateTime.Today;
-        DateCalendar.DisplayDate = DateTime.Today;
+        ResolutionText.Text = $"{_resolutionMinutes}-minute resolution";
+        ViewModeBox.SelectedIndex = 1;
+        RenderScheduler(resetScroll: true);
     }
 
     public string IssueKey => _issue.Key;
@@ -48,7 +66,7 @@ public partial class WorklogCalendarWindow
             if (version != _loadVersion) return;
             _worklogs = worklogs;
             StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
-            RefreshSelectedDay();
+            RenderScheduler();
         }
         catch (OperationCanceledException) when (load.IsCancellationRequested)
         {
@@ -69,30 +87,284 @@ public partial class WorklogCalendarWindow
         }
     }
 
-    private void Calendar_SelectedDatesChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => RefreshSelectedDay();
-
-    private void RefreshSelectedDay()
+    private void ViewMode_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (DateCalendar.SelectedDate is not { } selected) return;
-        var date = DateOnly.FromDateTime(selected);
-        var rows = _worklogs
-            .Where(w => DateOnly.FromDateTime(w.Started.ToLocalTime().DateTime) == date)
-            .Select(w => new WorklogRow(w.Started.ToLocalTime(), w.TimeSpentSeconds, w.Author, "Saved", w.Comment))
-            .Concat(_pending()
-                .Where(p => p.Key.Equals(_issue.Key, StringComparison.OrdinalIgnoreCase) &&
-                            DateOnly.FromDateTime(p.StartedUtc.ToLocalTime().DateTime) == date)
-                .Select(p => new WorklogRow(p.StartedUtc.ToLocalTime(), p.Seconds, "You", "Pending", p.LastError)))
-            .OrderBy(r => r.Started)
-            .ToList();
-
-        DayGroup.Header = selected.ToString("dddd, d MMMM yyyy");
-        WorklogGrid.ItemsSource = rows.Select(r => new DisplayRow(
-            r.Started.ToString("HH:mm"), BarViewModel.FormatElapsed(TimeSpan.FromSeconds(r.Seconds)),
-            r.Author, r.Status, r.Comment ?? string.Empty)).ToList();
-        DayTotal.Text = $"Total: {BarViewModel.FormatElapsed(TimeSpan.FromSeconds(rows.Sum(r => r.Seconds)))}";
+        if (!IsInitialized || ViewModeBox.SelectedIndex < 0) return;
+        _view = (WorklogCalendarView)ViewModeBox.SelectedIndex;
+        RenderScheduler(resetScroll: true);
     }
 
+    private void Previous_Click(object sender, RoutedEventArgs e)
+    {
+        _anchor = WorklogCalendarLayout.Move(_anchor, _view, -1);
+        RenderScheduler(resetScroll: true);
+    }
+
+    private void Next_Click(object sender, RoutedEventArgs e)
+    {
+        _anchor = WorklogCalendarLayout.Move(_anchor, _view, 1);
+        RenderScheduler(resetScroll: true);
+    }
+
+    private void Today_Click(object sender, RoutedEventArgs e)
+    {
+        _anchor = DateOnly.FromDateTime(DateTime.Today);
+        RenderScheduler(resetScroll: true);
+    }
+
+    private void RenderScheduler(bool resetScroll = false)
+    {
+        if (SchedulerHost is null) return;
+        var range = WorklogCalendarLayout.RangeFor(_view, _anchor,
+            CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek);
+        RangeTitle.Text = RangeLabel(range);
+        var entries = Entries()
+            .Where(e => e.Date >= range.Start && e.Date < range.EndExclusive)
+            .OrderBy(e => e.Started)
+            .ToList();
+        RangeTotal.Text = $"Total: {FormatDuration(entries.Sum(e => e.Seconds))}";
+
+        SchedulerHost.Children.Clear();
+        _timeScroll = null;
+        if (_view == WorklogCalendarView.Month)
+            RenderMonth(range, entries);
+        else
+            RenderTimeGrid(range, entries, resetScroll);
+    }
+
+    private void RenderMonth(WorklogCalendarRange range, IReadOnlyList<CalendarEntry> entries)
+    {
+        var firstDay = CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+        var back = (7 + (int)range.Start.DayOfWeek - (int)firstDay) % 7;
+        var gridStart = range.Start.AddDays(-back);
+        var grid = new Grid();
+        for (var column = 0; column < 7; column++) grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var row = 0; row < 6; row++) grid.RowDefinitions.Add(new RowDefinition());
+
+        for (var column = 0; column < 7; column++)
+        {
+            var day = (DayOfWeek)(((int)firstDay + column) % 7);
+            var header = new TextBlock
+            {
+                Text = CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(day),
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(4, 6, 4, 6),
+            };
+            Grid.SetColumn(header, column);
+            grid.Children.Add(header);
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        for (var cell = 0; cell < 42; cell++)
+        {
+            var date = gridStart.AddDays(cell);
+            var inMonth = date.Month == _anchor.Month && date.Year == _anchor.Year;
+            var dayEntries = entries.Where(e => e.Date == date).ToList();
+            var panel = new StackPanel { Margin = new Thickness(5) };
+            panel.Children.Add(new TextBlock
+            {
+                Text = date.Day.ToString(CultureInfo.CurrentCulture),
+                FontWeight = date == today ? FontWeights.Bold : FontWeights.Normal,
+                Opacity = inMonth ? 1 : 0.4,
+                HorizontalAlignment = HorizontalAlignment.Right,
+            });
+            if (dayEntries.Count > 0)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = $"Logged: {FormatDuration(dayEntries.Sum(e => e.Seconds))}",
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Margin = new Thickness(0, 3, 0, 2),
+                });
+                foreach (var entry in dayEntries.Take(4)) panel.Children.Add(MonthEntry(entry));
+                if (dayEntries.Count > 4)
+                    panel.Children.Add(new TextBlock { Text = $"+{dayEntries.Count - 4} more", FontSize = 11, Opacity = 0.65 });
+            }
+
+            var border = new Border
+            {
+                BorderBrush = GridLine,
+                BorderThickness = new Thickness(0.5),
+                Background = date == today ? TodayFill :
+                    date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday ? WeekendFill : Brushes.Transparent,
+                Child = panel,
+                Tag = date,
+            };
+            border.MouseLeftButtonDown += MonthDay_Click;
+            Grid.SetColumn(border, cell % 7);
+            Grid.SetRow(border, cell / 7 + 1);
+            grid.Children.Add(border);
+        }
+        SchedulerHost.Children.Add(grid);
+    }
+
+    private TextBlock MonthEntry(CalendarEntry entry) => new()
+    {
+        Text = $"{entry.Started:HH:mm}  {FormatDuration(entry.Seconds)}  {entry.Comment}",
+        TextTrimming = TextTrimming.CharacterEllipsis,
+        FontSize = 11,
+        Margin = new Thickness(0, 1, 0, 1),
+        Foreground = entry.Pending ? PendingFill : SavedFill,
+        ToolTip = EntryTooltip(entry),
+    };
+
+    private void MonthDay_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border { Tag: DateOnly date }) return;
+        _anchor = date;
+        if (e.ClickCount >= 2)
+        {
+            _view = WorklogCalendarView.Day;
+            ViewModeBox.SelectedIndex = (int)_view;
+        }
+        else
+        {
+            RenderScheduler();
+        }
+    }
+
+    private void RenderTimeGrid(WorklogCalendarRange range, IReadOnlyList<CalendarEntry> entries, bool resetScroll)
+    {
+        var days = range.DayCount;
+        var slots = 24 * 60 / _resolutionMinutes;
+        var slotHeight = Math.Max(8, _resolutionMinutes * 1.2);
+        var grid = new Grid { MinWidth = 680 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
+        for (var day = 0; day < days; day++) grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
+        for (var slot = 0; slot < slots; slot++)
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(slotHeight) });
+
+        for (var day = 0; day < days; day++)
+        {
+            var date = range.Start.AddDays(day);
+            var header = new Border
+            {
+                BorderBrush = GridLine,
+                BorderThickness = new Thickness(0.5),
+                Background = date == DateOnly.FromDateTime(DateTime.Today) ? TodayFill : Brushes.Transparent,
+                Child = new TextBlock
+                {
+                    Text = date.ToString(days == 1 ? "dddd, d MMMM" : "ddd, d MMM", CultureInfo.CurrentCulture),
+                    FontWeight = FontWeights.SemiBold,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                },
+            };
+            Grid.SetColumn(header, day + 1);
+            grid.Children.Add(header);
+        }
+
+        for (var slot = 0; slot < slots; slot++)
+        {
+            var minute = slot * _resolutionMinutes;
+            if (minute % 60 == 0)
+            {
+                var label = new TextBlock
+                {
+                    Text = DateTime.Today.AddMinutes(minute).ToString("t", CultureInfo.CurrentCulture),
+                    FontSize = 11,
+                    Opacity = 0.7,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(0, -7, 6, 0),
+                };
+                Grid.SetRow(label, slot + 1);
+                grid.Children.Add(label);
+            }
+            for (var day = 0; day < days; day++)
+            {
+                var cell = new Border
+                {
+                    BorderBrush = GridLine,
+                    BorderThickness = new Thickness(0.5, minute % 60 == 0 ? 0.7 : 0.25, 0.5, 0.25),
+                    Background = range.Start.AddDays(day) == DateOnly.FromDateTime(DateTime.Today)
+                        ? TodayFill : Brushes.Transparent,
+                };
+                Grid.SetColumn(cell, day + 1);
+                Grid.SetRow(cell, slot + 1);
+                grid.Children.Add(cell);
+            }
+        }
+
+        foreach (var entry in entries)
+        {
+            var day = entry.Date.DayNumber - range.Start.DayNumber;
+            if (day < 0 || day >= days) continue;
+            var startSlot = WorklogCalendarLayout.SlotIndex(TimeOnly.FromDateTime(entry.Started.DateTime), _resolutionMinutes);
+            var span = Math.Min(slots - startSlot,
+                WorklogCalendarLayout.SlotSpan(entry.Seconds, _resolutionMinutes));
+            var block = WorklogBlock(entry);
+            Grid.SetColumn(block, day + 1);
+            Grid.SetRow(block, startSlot + 1);
+            Grid.SetRowSpan(block, Math.Max(1, span));
+            Panel.SetZIndex(block, 2);
+            grid.Children.Add(block);
+        }
+
+        _timeScroll = new ScrollViewer
+        {
+            Content = grid,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+        SchedulerHost.Children.Add(_timeScroll);
+        if (resetScroll)
+            Dispatcher.BeginInvoke(() => _timeScroll?.ScrollToVerticalOffset(8 * 60 / _resolutionMinutes * slotHeight),
+                DispatcherPriority.Loaded);
+    }
+
+    private Border WorklogBlock(CalendarEntry entry)
+    {
+        var text = new TextBlock
+        {
+            Text = $"{entry.Started:HH:mm}–{entry.Ended:HH:mm}  {FormatDuration(entry.Seconds)}\n{_issue.Key}  {entry.Comment}",
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = Brushes.White,
+            FontSize = 11,
+            Margin = new Thickness(6, 3, 6, 3),
+        };
+        return new Border
+        {
+            Margin = new Thickness(2, 1, 2, 1),
+            CornerRadius = new CornerRadius(4),
+            Background = entry.Pending ? PendingFill : SavedFill,
+            BorderBrush = entry.Pending ? Brushes.DarkOrange : Brushes.RoyalBlue,
+            BorderThickness = new Thickness(1),
+            ToolTip = EntryTooltip(entry),
+            Child = text,
+        };
+    }
+
+    private string EntryTooltip(CalendarEntry entry) =>
+        $"{_issue.Key}\n{entry.Started:dddd, d MMMM yyyy HH:mm}–{entry.Ended:HH:mm}\n" +
+        $"{FormatDuration(entry.Seconds)} · {(entry.Pending ? "Pending locally" : "Saved in Jira")}" +
+        (string.IsNullOrWhiteSpace(entry.Comment) ? string.Empty : $"\n{entry.Comment}");
+
+    private IReadOnlyList<CalendarEntry> Entries() => _worklogs
+        .Select(w => new CalendarEntry(w.Started.ToLocalTime(), w.TimeSpentSeconds, w.Comment ?? string.Empty, false))
+        .Concat(_pending()
+            .Where(p => p.Key.Equals(_issue.Key, StringComparison.OrdinalIgnoreCase))
+            .Select(p => new CalendarEntry(p.StartedUtc.ToLocalTime(), p.Seconds, p.LastError ?? string.Empty, true)))
+        .ToList();
+
+    private string RangeLabel(WorklogCalendarRange range) => _view switch
+    {
+        WorklogCalendarView.Day => range.Start.ToString("dddd, d MMMM yyyy", CultureInfo.CurrentCulture),
+        WorklogCalendarView.Week => $"{range.Start:dd MMM} – {range.EndExclusive.AddDays(-1):dd MMM yyyy}",
+        WorklogCalendarView.Month => range.Start.ToString("MMMM yyyy", CultureInfo.CurrentCulture),
+        _ => string.Empty,
+    };
+
+    private static string FormatDuration(int seconds) =>
+        BarViewModel.FormatElapsed(TimeSpan.FromSeconds(seconds));
+
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
     private void Window_Closed(object? sender, EventArgs e)
     {
         _isClosed = true;
@@ -101,6 +373,16 @@ public partial class WorklogCalendarWindow
         _closed.Dispose();
     }
 
-    private sealed record WorklogRow(DateTimeOffset Started, int Seconds, string Author, string Status, string? Comment);
-    private sealed record DisplayRow(string Time, string Duration, string Author, string Status, string Comment);
+    private static SolidColorBrush MakeBrush(byte alpha, byte red, byte green, byte blue)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb(alpha, red, green, blue));
+        brush.Freeze();
+        return brush;
+    }
+
+    private sealed record CalendarEntry(DateTimeOffset Started, int Seconds, string Comment, bool Pending)
+    {
+        public DateOnly Date => DateOnly.FromDateTime(Started.DateTime);
+        public DateTimeOffset Ended => Started.AddSeconds(Seconds);
+    }
 }

@@ -299,7 +299,8 @@ public sealed class AppController : IDisposable
             return;
         }
 
-        var window = new WorklogCalendarWindow(ticket.Issue, Client, () => Worklogs.Pending);
+        var window = new WorklogCalendarWindow(ticket.Issue, Client, () => Worklogs.Pending,
+            Settings.CalendarResolutionMinutes);
         _worklogWindows[ticket.Key] = window;
         window.Closed += (_, _) => _worklogWindows.Remove(ticket.Key);
         window.Show();

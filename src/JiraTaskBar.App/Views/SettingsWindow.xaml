@@ -89,6 +89,10 @@
                 <ComboBoxItem Content="Don't log" />
             </ComboBox>
 
+            <TextBlock Text="Calendar time resolution" FontWeight="SemiBold" />
+            <ComboBox x:Name="CalendarResolutionBox" Margin="0,4,0,10"
+                      ToolTip="Day and Week calendar rows, selections, and edits snap to this interval." />
+
             <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,8" />
             <ui:ToggleSwitch x:Name="HideFromCaptureSwitch" Margin="0,0,0,8"
                              Content="Hide the bar from screen sharing and recordings"

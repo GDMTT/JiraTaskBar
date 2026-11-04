@@ -245,6 +245,49 @@ public class ContextSwitchHistoryTests : IDisposable
     }
 }
 
+public class WorklogCalendarLayoutTests
+{
+    [Fact]
+    public void Ranges_follow_the_selected_view_and_first_day_of_week()
+    {
+        var anchor = new DateOnly(2026, 11, 5);
+
+        var day = WorklogCalendarLayout.RangeFor(WorklogCalendarView.Day, anchor, DayOfWeek.Monday);
+        var week = WorklogCalendarLayout.RangeFor(WorklogCalendarView.Week, anchor, DayOfWeek.Monday);
+        var month = WorklogCalendarLayout.RangeFor(WorklogCalendarView.Month, anchor, DayOfWeek.Monday);
+
+        Assert.Equal(new DateOnly(2026, 11, 5), day.Start);
+        Assert.Equal(1, day.DayCount);
+        Assert.Equal(new DateOnly(2026, 11, 2), week.Start);
+        Assert.Equal(7, week.DayCount);
+        Assert.Equal(new DateOnly(2026, 11, 1), month.Start);
+        Assert.Equal(new DateOnly(2026, 12, 1), month.EndExclusive);
+    }
+
+    [Theory]
+    [InlineData(5, 61, 1)]
+    [InlineData(15, 901, 2)]
+    [InlineData(30, 3600, 2)]
+    [InlineData(17, 3600, 2)] // unsupported values normalize to 30 minutes
+    public void Worklog_spans_round_up_to_whole_resolution_slots(int resolution, int seconds, int expected)
+    {
+        Assert.Equal(expected, WorklogCalendarLayout.SlotSpan(seconds, resolution));
+    }
+
+    [Fact]
+    public void Navigation_moves_by_the_active_view()
+    {
+        var anchor = new DateOnly(2026, 11, 5);
+
+        Assert.Equal(new DateOnly(2026, 11, 6),
+            WorklogCalendarLayout.Move(anchor, WorklogCalendarView.Day, 1));
+        Assert.Equal(new DateOnly(2026, 10, 29),
+            WorklogCalendarLayout.Move(anchor, WorklogCalendarView.Week, -1));
+        Assert.Equal(new DateOnly(2026, 12, 5),
+            WorklogCalendarLayout.Move(anchor, WorklogCalendarView.Month, 1));
+    }
+}
+
 public class WorklogTests : IDisposable
 {
     private readonly TempDir _dir = new();
