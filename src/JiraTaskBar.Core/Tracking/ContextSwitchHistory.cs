@@ -9,6 +9,40 @@ public sealed record ContextInterval(string Key, DateTimeOffset StartedUtc, Date
 
 public sealed record ContextSwitch(string FromKey, string ToKey, DateTimeOffset OccurredUtc);
 
+public sealed record ContextTicketSummary(string Key, int Intervals, TimeSpan Total, TimeSpan Average);
+
+public sealed record ContextTransitionSummary(string FromKey, string ToKey, int Count);
+
+public sealed record ContextSwitchReport(
+    DateTimeOffset FromUtc,
+    DateTimeOffset ToUtc,
+    int SwitchCount,
+    int IntervalCount,
+    TimeSpan TotalActive,
+    TimeSpan AverageInterval,
+    IReadOnlyList<ContextTicketSummary> Tickets,
+    IReadOnlyList<ContextTransitionSummary> Transitions);
+
+public static class LocalDateBoundary
+{
+    /// <summary>
+    /// Returns the earliest UTC instant belonging to a date in <paramref name="timeZone"/>.
+    /// Some zones skip or repeat midnight during a DST transition, so converting midnight
+    /// directly can throw or select the later of two possible instants.
+    /// </summary>
+    public static DateTimeOffset ToUtc(DateTime date, TimeZoneInfo timeZone)
+    {
+        var local = DateTime.SpecifyKind(date.Date, DateTimeKind.Unspecified);
+        while (timeZone.IsInvalidTime(local))
+            local = local.AddMinutes(1);
+
+        var offset = timeZone.IsAmbiguousTime(local)
+            ? timeZone.GetAmbiguousTimeOffsets(local).Max()
+            : timeZone.GetUtcOffset(local);
+        return new DateTimeOffset(local, offset).ToUniversalTime();
+    }
+}
+
 public sealed class ContextSwitchHistoryState
 {
     public int Version { get; set; } = 1;
@@ -61,6 +95,46 @@ public sealed class ContextSwitchHistory
     {
         _state = new ContextSwitchHistoryState();
         Save();
+    }
+
+    /// <summary>Builds a report for the half-open UTC range [from, to), clipping intervals at its edges.</summary>
+    public ContextSwitchReport BuildReport(DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    {
+        if (toUtc < fromUtc) throw new ArgumentException("The report end must not precede its start.", nameof(toUtc));
+
+        var intervals = _state.Intervals
+            .Select(i => new ContextInterval(i.Key,
+                i.StartedUtc < fromUtc ? fromUtc : i.StartedUtc,
+                i.EndedUtc > toUtc ? toUtc : i.EndedUtc))
+            .Where(i => i.EndedUtc > i.StartedUtc)
+            .ToList();
+        var switches = _state.Switches
+            .Where(s => s.OccurredUtc >= fromUtc && s.OccurredUtc < toUtc)
+            .ToList();
+
+        var tickets = intervals
+            .GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var total = TimeSpan.FromTicks(g.Sum(i => i.Duration.Ticks));
+                return new ContextTicketSummary(g.Key, g.Count(), total,
+                    TimeSpan.FromTicks(total.Ticks / g.Count()));
+            })
+            .OrderByDescending(t => t.Total)
+            .ThenBy(t => t.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var transitions = switches
+            .GroupBy(s => (s.FromKey.ToUpperInvariant(), s.ToKey.ToUpperInvariant()))
+            .Select(g => new ContextTransitionSummary(g.First().FromKey, g.First().ToKey, g.Count()))
+            .OrderByDescending(t => t.Count)
+            .ThenBy(t => t.FromKey, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(t => t.ToKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var totalActive = TimeSpan.FromTicks(intervals.Sum(i => i.Duration.Ticks));
+
+        return new ContextSwitchReport(fromUtc, toUtc, switches.Count, intervals.Count, totalActive,
+            intervals.Count == 0 ? TimeSpan.Zero : TimeSpan.FromTicks(totalActive.Ticks / intervals.Count),
+            tickets, transitions);
     }
 
     private void Save() => _store.Save(_state);

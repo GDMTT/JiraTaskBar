@@ -200,6 +200,49 @@ public class ContextSwitchHistoryTests : IDisposable
         Assert.Equal(original, File.ReadAllText(path));
         Assert.Equal("ABC-9", Assert.Single(history.Intervals).Key);
     }
+
+    [Fact]
+    public void Report_clips_intervals_and_groups_tickets_and_transitions()
+    {
+        var store = new JsonFileStore<ContextSwitchHistoryState>(_dir.File("context.json"));
+        var history = new ContextSwitchHistory(store);
+        var day = new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.Zero);
+        history.Record(new CompletedSession("ABC-1", day.AddMinutes(-10), day.AddMinutes(20)));
+        history.Record(new CompletedSession("abc-1", day.AddHours(1), day.AddHours(1.5)));
+        history.Record(new CompletedSession("ABC-2", day.AddHours(2), day.AddHours(2.25)));
+        history.RecordSwitch("ABC-1", "ABC-2", day.AddHours(2));
+        history.RecordSwitch("abc-1", "abc-2", day.AddHours(2.5));
+
+        var report = history.BuildReport(day, day.AddHours(3));
+
+        Assert.Equal(2, report.SwitchCount);
+        Assert.Equal(3, report.IntervalCount);
+        Assert.Equal(TimeSpan.FromMinutes(65), report.TotalActive);
+        var abc1 = Assert.Single(report.Tickets, t => t.Key.Equals("ABC-1", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(2, abc1.Intervals);
+        Assert.Equal(TimeSpan.FromMinutes(50), abc1.Total);
+        var transition = Assert.Single(report.Transitions, t => t.FromKey.Equals("ABC-1", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(2, transition.Count);
+    }
+
+    [Fact]
+    public void Local_date_boundary_handles_a_midnight_dst_gap()
+    {
+        var start = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 0, 0, 0), 3, 1);
+        var end = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 0, 0, 0), 11, 1);
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+            new DateTime(2026, 1, 1), new DateTime(2026, 12, 31), TimeSpan.FromHours(1), start, end);
+        var zone = TimeZoneInfo.CreateCustomTimeZone(
+            "Test/MidnightGap", TimeSpan.Zero, "Midnight gap", "Standard", "Daylight", [rule]);
+
+        var boundary = LocalDateBoundary.ToUtc(new DateTime(2026, 3, 1), zone);
+        var local = TimeZoneInfo.ConvertTime(boundary, zone);
+
+        Assert.Equal(new DateTime(2026, 3, 1), local.Date);
+        Assert.Equal(1, local.Hour);
+    }
 }
 
 public class WorklogTests : IDisposable
