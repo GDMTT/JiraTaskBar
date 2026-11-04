@@ -20,14 +20,17 @@ public static class JiraPayloads
                + abs.Minutes.ToString("00", CultureInfo.InvariantCulture);
     }
 
-    public static JsonObject Worklog(DateTimeOffset startedLocal, int timeSpentSeconds, string? comment)
+    public static JsonObject Worklog(DateTimeOffset startedLocal, int timeSpentSeconds, string? comment,
+        JsonNode? commentDocument = null)
     {
         var body = new JsonObject
         {
             ["started"] = FormatJiraDate(startedLocal),
             ["timeSpentSeconds"] = timeSpentSeconds,
         };
-        if (!string.IsNullOrWhiteSpace(comment))
+        if (commentDocument is not null)
+            body["comment"] = commentDocument.DeepClone();
+        else if (!string.IsNullOrWhiteSpace(comment))
             body["comment"] = PlainTextAdf(comment);
         return body;
     }
@@ -128,7 +131,8 @@ public static class JiraPayloads
                 started,
                 item["timeSpentSeconds"]?.GetValue<int>() ?? 0,
                 item["author"]?["displayName"]?.GetValue<string>() ?? string.Empty,
-                AdfText(item["comment"])));
+                AdfText(item["comment"]),
+                item["comment"]?.DeepClone()));
         }
         return (result, node?["total"]?.GetValue<int>() ?? items.Count, items.Count);
     }

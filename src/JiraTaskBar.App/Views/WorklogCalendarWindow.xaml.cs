@@ -36,6 +36,8 @@ public partial class WorklogCalendarWindow
     private double _slotHeight;
     private TimeSlot? _selectionStart;
     private Border? _selectionBlock;
+    private CalendarEdit? _calendarEdit;
+    private bool _savingEdit;
 
     public WorklogCalendarWindow(JiraIssue issue, IJiraClient client,
         Func<IReadOnlyList<PendingWorklog>> pending, Func<IReadOnlyList<JiraIssue>>? issues = null,
@@ -62,7 +64,12 @@ public partial class WorklogCalendarWindow
         _issue = issue;
         WindowTitle.Title = $"Time calendar – {issue.Key}";
         TicketTitle.Text = $"{issue.Key}  {issue.Summary}";
-        if (changed) _ = RefreshAsync();
+        if (changed)
+        {
+            _worklogs = [];
+            RenderScheduler();
+            _ = RefreshAsync();
+        }
         else RenderScheduler();
     }
 
@@ -72,6 +79,7 @@ public partial class WorklogCalendarWindow
     public async Task RefreshAsync()
     {
         if (_isClosed) return;
+        if (_calendarEdit is not null || _savingEdit) return;
         var version = ++_loadVersion;
         _load?.Cancel();
         var load = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
@@ -355,6 +363,23 @@ public partial class WorklogCalendarWindow
             FontSize = 11,
             Margin = new Thickness(6, 3, 6, 3),
         };
+        var content = new Grid();
+        content.RowDefinitions.Add(new RowDefinition());
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(7) });
+        content.Children.Add(text);
+        var resizeHandle = new Border
+        {
+            Height = 5,
+            Margin = new Thickness(16, 0, 16, 1),
+            CornerRadius = new CornerRadius(2),
+            Background = MakeBrush(0xB0, 0xFF, 0xFF, 0xFF),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Cursor = entry.Pending ? Cursors.Arrow : Cursors.SizeNS,
+        };
+        Grid.SetRow(resizeHandle, 1);
+        content.Children.Add(resizeHandle);
+
         var block = new Border
         {
             Margin = new Thickness(2, 1, 2, 1),
@@ -362,12 +387,125 @@ public partial class WorklogCalendarWindow
             Background = entry.Pending ? PendingFill : SavedFill,
             BorderBrush = entry.Pending ? Brushes.DarkOrange : Brushes.RoyalBlue,
             BorderThickness = new Thickness(1),
-            ToolTip = EntryTooltip(entry),
-            Child = text,
+            ToolTip = EntryTooltip(entry) + (entry.Pending ? "\nPending worklogs cannot be moved until Jira accepts them." :
+                "\nDrag to move; drag the bottom edge to change duration."),
+            Child = content,
             Tag = entry,
+            Cursor = entry.Pending ? Cursors.Arrow : Cursors.SizeAll,
         };
-        block.MouseLeftButtonDown += (_, e) => e.Handled = true;
+        if (entry.Pending)
+            block.MouseLeftButtonDown += (_, e) => e.Handled = true;
+        else
+        {
+            block.PreviewMouseLeftButtonDown += Worklog_MouseLeftButtonDown;
+            block.PreviewMouseMove += Worklog_MouseMove;
+            block.PreviewMouseLeftButtonUp += Worklog_MouseLeftButtonUp;
+            block.LostMouseCapture += Worklog_LostMouseCapture;
+        }
         return block;
+    }
+
+    private void Worklog_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_savingEdit || sender is not Border { Tag: CalendarEntry entry } block || _timeGrid is null) return;
+        var resize = e.GetPosition(block).Y >= Math.Max(0, block.ActualHeight - 12);
+        var row = Grid.GetRow(block) - 1;
+        var span = Grid.GetRowSpan(block);
+        var pointer = TimeSlotAt(_timeGrid, e.GetPosition(_timeGrid));
+        _calendarEdit = new CalendarEdit(entry, resize ? EditMode.Resize : EditMode.Move, block,
+            Grid.GetColumn(block) - 1, row, span,
+            pointer is null ? 0 : Math.Clamp(pointer.Slot - row, 0, Math.Max(0, span - 1)));
+        block.CaptureMouse();
+        StatusText.Text = resize ? "Drag the bottom edge to change duration…" : "Drag the worklog to a new time or day…";
+        e.Handled = true;
+    }
+
+    private void Worklog_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_calendarEdit is not { } edit || sender != edit.Block || e.LeftButton != MouseButtonState.Pressed ||
+            _timeGrid is null || TimeSlotAt(_timeGrid, e.GetPosition(_timeGrid)) is not { } slot) return;
+        var slots = 24 * 60 / _resolutionMinutes;
+        if (edit.Mode == EditMode.Move)
+        {
+            var start = Math.Clamp(slot.Slot - edit.GrabOffset, 0, Math.Max(0, slots - edit.OriginalSpan));
+            var day = slot.Date.DayNumber - _timeRange!.Start.DayNumber;
+            Grid.SetColumn(edit.Block, day + 1);
+            Grid.SetRow(edit.Block, start + 1);
+        }
+        else
+        {
+            var span = Math.Clamp(slot.Slot - edit.OriginalSlot + 1, 1, slots - edit.OriginalSlot);
+            Grid.SetRowSpan(edit.Block, span);
+        }
+        e.Handled = true;
+    }
+
+    private async void Worklog_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_calendarEdit is not { } edit || sender != edit.Block || _timeRange is null) return;
+        _calendarEdit = null;
+        edit.Block.ReleaseMouseCapture();
+        var day = Grid.GetColumn(edit.Block) - 1;
+        var slot = Grid.GetRow(edit.Block) - 1;
+        var span = Grid.GetRowSpan(edit.Block);
+        if (day == edit.OriginalDay && slot == edit.OriginalSlot && span == edit.OriginalSpan)
+        {
+            StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
+            return;
+        }
+
+        var date = _timeRange.Start.AddDays(day);
+        var time = TimeOnly.MinValue.AddMinutes(slot * _resolutionMinutes);
+        var started = WorklogCalendarLayout.LocalDateTime(date, time, TimeZoneInfo.Local);
+        var seconds = span * _resolutionMinutes * 60;
+        await SaveCalendarEditAsync(edit.Entry, started, seconds);
+        e.Handled = true;
+    }
+
+    private void Worklog_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_calendarEdit is null) return;
+        _calendarEdit = null;
+        StatusText.Text = "Edit cancelled.";
+        RenderScheduler();
+    }
+
+    private async Task SaveCalendarEditAsync(CalendarEntry entry, DateTimeOffset started, int seconds)
+    {
+        _savingEdit = true;
+        StatusText.Text = "Checking the latest Jira worklog…";
+        try
+        {
+            var latest = await _client.GetWorklogsAsync(_issue.Key, _closed.Token);
+            var current = latest.FirstOrDefault(w => w.Id == entry.Id);
+            if (current is null || current.Started.ToUniversalTime() != entry.Started.ToUniversalTime() ||
+                current.TimeSpentSeconds != entry.Seconds || !string.Equals(current.Comment ?? string.Empty,
+                    entry.Comment, StringComparison.Ordinal))
+            {
+                _worklogs = latest;
+                StatusText.Text = "This worklog changed in Jira. The calendar was refreshed without overwriting it.";
+                RenderScheduler();
+                return;
+            }
+
+            StatusText.Text = "Saving the changed worklog to Jira…";
+            await _client.UpdateWorklogAsync(_issue.Key, current, started, seconds, _closed.Token);
+            _savingEdit = false;
+            await RefreshAsync();
+            StatusText.Text = "Worklog updated in Jira.";
+        }
+        catch (OperationCanceledException) when (_closed.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Could not update the worklog; its previous position was restored: {ex.Message}";
+            RenderScheduler();
+        }
+        finally
+        {
+            _savingEdit = false;
+        }
     }
 
     private void TimeGrid_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -430,10 +568,11 @@ public partial class WorklogCalendarWindow
 
     private void ClearSelection(Grid grid)
     {
-        grid.ReleaseMouseCapture();
-        if (_selectionBlock is not null) grid.Children.Remove(_selectionBlock);
-        _selectionBlock = null;
+        var block = _selectionBlock;
         _selectionStart = null;
+        _selectionBlock = null;
+        if (grid.IsMouseCaptured) grid.ReleaseMouseCapture();
+        if (block is not null) grid.Children.Remove(block);
     }
 
     private TimeSlot? TimeSlotAt(Grid grid, Point point)
@@ -492,10 +631,11 @@ public partial class WorklogCalendarWindow
         (string.IsNullOrWhiteSpace(entry.Comment) ? string.Empty : $"\n{entry.Comment}");
 
     private IReadOnlyList<CalendarEntry> Entries() => _worklogs
-        .Select(w => new CalendarEntry(w.Started.ToLocalTime(), w.TimeSpentSeconds, w.Comment ?? string.Empty, false))
+        .Select(w => new CalendarEntry(w.Id, w.Started.ToLocalTime(), w.TimeSpentSeconds, w.Comment ?? string.Empty, false))
         .Concat(_pending()
             .Where(p => p.Key.Equals(_issue.Key, StringComparison.OrdinalIgnoreCase))
-            .Select(p => new CalendarEntry(p.StartedUtc.ToLocalTime(), p.Seconds, p.LastError ?? string.Empty, true)))
+            .Select(p => new CalendarEntry(p.Id.ToString("N"), p.StartedUtc.ToLocalTime(), p.Seconds,
+                p.LastError ?? string.Empty, true)))
         .ToList();
 
     private string RangeLabel(WorklogCalendarRange range) => _view switch
@@ -526,13 +666,18 @@ public partial class WorklogCalendarWindow
         return brush;
     }
 
-    private sealed record CalendarEntry(DateTimeOffset Started, int Seconds, string Comment, bool Pending)
+    private sealed record CalendarEntry(string Id, DateTimeOffset Started, int Seconds, string Comment, bool Pending)
     {
         public DateOnly Date => DateOnly.FromDateTime(Started.DateTime);
         public DateTimeOffset Ended => Started.AddSeconds(Seconds);
     }
 
     private sealed record TimeSlot(DateOnly Date, int Slot);
+
+    private enum EditMode { Move, Resize }
+
+    private sealed record CalendarEdit(CalendarEntry Entry, EditMode Mode, Border Block,
+        int OriginalDay, int OriginalSlot, int OriginalSpan, int GrabOffset);
 
     public const string TicketDragFormat = "JiraTaskBar.TicketKey";
 }

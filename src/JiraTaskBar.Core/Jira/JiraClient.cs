@@ -12,6 +12,8 @@ public interface IJiraClient
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
     Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
+    Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
+        int timeSpentSeconds, CancellationToken ct = default);
     Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default);
     /// <returns>The filename Jira stored the attachment under.</returns>
     Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default);
@@ -128,6 +130,17 @@ public sealed class JiraClient : IJiraClient
     public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) =>
         SendAsync(HttpMethod.Post, $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog",
             JiraPayloads.Worklog(startedLocal, timeSpentSeconds, comment), ct);
+
+    public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
+        int timeSpentSeconds, CancellationToken ct = default)
+    {
+        var worklogId = worklog.Id;
+        if (string.IsNullOrWhiteSpace(worklogId) || !worklogId.All(char.IsAsciiDigit))
+            throw new ArgumentException("Jira worklog IDs must be numeric.", nameof(worklog));
+        return SendAsync(HttpMethod.Put,
+            $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog/{worklogId}",
+            JiraPayloads.Worklog(startedLocal, timeSpentSeconds, worklog.Comment, worklog.CommentDocument), ct);
+    }
 
     public async Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default)
     {

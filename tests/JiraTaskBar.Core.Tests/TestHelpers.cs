@@ -79,6 +79,10 @@ public sealed class FakeJiraClient : IJiraClient
         return Task.CompletedTask;
     }
 
+    public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
+        int timeSpentSeconds, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+
     public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
