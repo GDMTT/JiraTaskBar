@@ -49,6 +49,17 @@ public static class WorklogCalendarLayout
         return Math.Max(1, (int)Math.Ceiling(Math.Max(0, seconds) / (double)slotSeconds));
     }
 
+    /// <summary>Resolves a local calendar time, choosing the earliest instant if it repeats.</summary>
+    public static DateTimeOffset LocalDateTime(DateOnly date, TimeOnly time, TimeZoneInfo timeZone)
+    {
+        var local = DateTime.SpecifyKind(date.ToDateTime(time), DateTimeKind.Unspecified);
+        while (timeZone.IsInvalidTime(local)) local = local.AddMinutes(1);
+        var offset = timeZone.IsAmbiguousTime(local)
+            ? timeZone.GetAmbiguousTimeOffsets(local).Max()
+            : timeZone.GetUtcOffset(local);
+        return new DateTimeOffset(local, offset);
+    }
+
     private static WorklogCalendarRange Week(DateOnly anchor, DayOfWeek firstDayOfWeek)
     {
         var back = (7 + (int)anchor.DayOfWeek - (int)firstDayOfWeek) % 7;

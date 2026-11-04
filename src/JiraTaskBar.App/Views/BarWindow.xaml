@@ -46,7 +46,9 @@
         <DataTemplate x:Key="TicketTemplate" DataType="{x:Type vm:TicketViewModel}">
             <Grid x:Name="Cell" Margin="3,2"
                   Width="{Binding DataContext.ButtonWidth, RelativeSource={RelativeSource AncestorType=Window}}">
-                <ui:Button Style="{StaticResource TicketButtonStyle}" Command="{Binding ToggleCommand}">
+                <ui:Button Style="{StaticResource TicketButtonStyle}" Command="{Binding ToggleCommand}"
+                           PreviewMouseLeftButtonDown="Ticket_PreviewMouseLeftButtonDown"
+                           PreviewMouseMove="Ticket_PreviewMouseMove">
                     <ui:Button.InputBindings>
                         <MouseBinding MouseAction="MiddleClick" Command="{Binding OpenInBrowserCommand}" />
                     </ui:Button.InputBindings>
@@ -69,7 +71,7 @@
                                 <TextBlock Margin="0,2,0,0" Text="{Binding Summary}" TextWrapping="Wrap" />
                                 <TextBlock Margin="0,4,0,0" Opacity="0.75" Text="{Binding MetaLine}" />
                                 <TextBlock Margin="0,6,0,0" FontSize="11" Opacity="0.6"
-                                           Text="Click: start/stop timer · Right-click: ticket menu · Middle-click: open in browser" />
+                                           Text="Click: start/stop · Drag: add to calendar · Right-click: menu · Middle-click: open" />
                             </StackPanel>
                         </ToolTip>
                     </ui:Button.ToolTip>

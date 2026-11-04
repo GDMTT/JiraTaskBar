@@ -286,6 +286,25 @@ public class WorklogCalendarLayoutTests
         Assert.Equal(new DateOnly(2026, 12, 5),
             WorklogCalendarLayout.Move(anchor, WorklogCalendarView.Month, 1));
     }
+
+    [Fact]
+    public void Ambiguous_local_time_uses_the_earliest_instant()
+    {
+        var start = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0), 3, 1);
+        var end = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0), 11, 1);
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+            new DateTime(2026, 1, 1), new DateTime(2026, 12, 31), TimeSpan.FromHours(1), start, end);
+        var zone = TimeZoneInfo.CreateCustomTimeZone(
+            "Test/Ambiguous", TimeSpan.Zero, "Test", "Standard", "Daylight", [rule]);
+
+        var instant = WorklogCalendarLayout.LocalDateTime(
+            new DateOnly(2026, 11, 1), new TimeOnly(1, 30), zone);
+
+        Assert.Equal(TimeSpan.FromHours(1), instant.Offset);
+        Assert.Equal(new DateTimeOffset(2026, 11, 1, 0, 30, 0, TimeSpan.Zero), instant.ToUniversalTime());
+    }
 }
 
 public class WorklogTests : IDisposable

@@ -31,6 +31,7 @@
                     <ComboBoxItem Content="Week" />
                     <ComboBoxItem Content="Day" />
                 </ComboBox>
+                <ui:Button Margin="8,0,0,0" Content="New worklog…" Appearance="Primary" Click="NewWorklog_Click" />
                 <ui:Button x:Name="RefreshButton" Margin="8,0,0,0" Content="Refresh" Click="Refresh_Click" />
             </StackPanel>
             <StackPanel>

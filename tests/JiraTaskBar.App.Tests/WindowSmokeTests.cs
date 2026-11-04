@@ -74,6 +74,12 @@ public class WindowSmokeTests
             worklogCalendar.UpdateLayout();
             worklogCalendar.Close();
 
+            var addWorklog = new AddWorklogWindow([issue], issue, DateTimeOffset.Now,
+                TimeSpan.FromMinutes(30), new NullJiraClient());
+            addWorklog.Show();
+            addWorklog.UpdateLayout();
+            addWorklog.Close();
+
             // Regression: Cancel with unsent text used to throw "Cannot set Visibility ... while a
             // Window is closing". The close is now cancelled and the discard prompt deferred.
             var unsent = new CommentWindow(issue, new NullJiraClient());

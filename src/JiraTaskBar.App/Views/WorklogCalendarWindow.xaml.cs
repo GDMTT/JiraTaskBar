@@ -18,9 +18,10 @@ public partial class WorklogCalendarWindow
     private static readonly Brush SavedFill = MakeBrush(0xD8, 0x57, 0x68, 0xE8);
     private static readonly Brush PendingFill = MakeBrush(0xDF, 0xE6, 0x9F, 0x20);
 
-    private readonly JiraIssue _issue;
+    private JiraIssue _issue;
     private readonly IJiraClient _client;
     private readonly Func<IReadOnlyList<PendingWorklog>> _pending;
+    private readonly Func<IReadOnlyList<JiraIssue>> _issues;
     private readonly CancellationTokenSource _closed = new();
     private readonly int _resolutionMinutes;
     private CancellationTokenSource? _load;
@@ -30,14 +31,21 @@ public partial class WorklogCalendarWindow
     private WorklogCalendarView _view = WorklogCalendarView.Week;
     private IReadOnlyList<JiraWorklog> _worklogs = [];
     private ScrollViewer? _timeScroll;
+    private Grid? _timeGrid;
+    private WorklogCalendarRange? _timeRange;
+    private double _slotHeight;
+    private TimeSlot? _selectionStart;
+    private Border? _selectionBlock;
 
     public WorklogCalendarWindow(JiraIssue issue, IJiraClient client,
-        Func<IReadOnlyList<PendingWorklog>> pending, int resolutionMinutes = 30)
+        Func<IReadOnlyList<PendingWorklog>> pending, Func<IReadOnlyList<JiraIssue>>? issues = null,
+        int resolutionMinutes = 30)
     {
         InitializeComponent();
         _issue = issue;
         _client = client;
         _pending = pending;
+        _issues = issues ?? (() => [issue]);
         _resolutionMinutes = WorklogCalendarLayout.NormalizeResolution(resolutionMinutes);
         WindowTitle.Title = $"Time calendar – {issue.Key}";
         TicketTitle.Text = $"{issue.Key}  {issue.Summary}";
@@ -47,6 +55,16 @@ public partial class WorklogCalendarWindow
     }
 
     public string IssueKey => _issue.Key;
+
+    public void FocusIssue(JiraIssue issue)
+    {
+        var changed = !_issue.Key.Equals(issue.Key, StringComparison.OrdinalIgnoreCase);
+        _issue = issue;
+        WindowTitle.Title = $"Time calendar – {issue.Key}";
+        TicketTitle.Text = $"{issue.Key}  {issue.Summary}";
+        if (changed) _ = RefreshAsync();
+        else RenderScheduler();
+    }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e) => await RefreshAsync();
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
@@ -231,7 +249,16 @@ public partial class WorklogCalendarWindow
         var days = range.DayCount;
         var slots = 24 * 60 / _resolutionMinutes;
         var slotHeight = Math.Max(8, _resolutionMinutes * 1.2);
-        var grid = new Grid { MinWidth = 680 };
+        var grid = new Grid { MinWidth = 680, AllowDrop = true };
+        _timeGrid = grid;
+        _timeRange = range;
+        _slotHeight = slotHeight;
+        grid.MouseLeftButtonDown += TimeGrid_MouseLeftButtonDown;
+        grid.MouseMove += TimeGrid_MouseMove;
+        grid.MouseLeftButtonUp += TimeGrid_MouseLeftButtonUp;
+        grid.LostMouseCapture += TimeGrid_LostMouseCapture;
+        grid.DragOver += TimeGrid_DragOver;
+        grid.Drop += TimeGrid_Drop;
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
         for (var day = 0; day < days; day++) grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
@@ -328,7 +355,7 @@ public partial class WorklogCalendarWindow
             FontSize = 11,
             Margin = new Thickness(6, 3, 6, 3),
         };
-        return new Border
+        var block = new Border
         {
             Margin = new Thickness(2, 1, 2, 1),
             CornerRadius = new CornerRadius(4),
@@ -337,7 +364,126 @@ public partial class WorklogCalendarWindow
             BorderThickness = new Thickness(1),
             ToolTip = EntryTooltip(entry),
             Child = text,
+            Tag = entry,
         };
+        block.MouseLeftButtonDown += (_, e) => e.Handled = true;
+        return block;
+    }
+
+    private void TimeGrid_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Grid grid || TimeSlotAt(grid, e.GetPosition(grid)) is not { } slot) return;
+        _selectionStart = slot;
+        grid.CaptureMouse();
+        UpdateSelection(slot);
+        e.Handled = true;
+    }
+
+    private void TimeGrid_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_selectionStart is null || e.LeftButton != MouseButtonState.Pressed || sender is not Grid grid) return;
+        if (TimeSlotAt(grid, e.GetPosition(grid)) is { } slot) UpdateSelection(slot);
+    }
+
+    private async void TimeGrid_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_selectionStart is not { } start || sender is not Grid grid) return;
+        var end = TimeSlotAt(grid, e.GetPosition(grid)) ?? start;
+        var lastSlot = end.Date == start.Date ? end.Slot : start.Slot;
+        var first = Math.Min(start.Slot, lastSlot);
+        var count = Math.Abs(lastSlot - start.Slot) + 1;
+        ClearSelection(grid);
+        await ShowAddWorklogAsync(start.Date, first, count, _issue);
+        e.Handled = true;
+    }
+
+    private void TimeGrid_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (sender is Grid grid && _selectionStart is not null) ClearSelection(grid);
+    }
+
+    private void UpdateSelection(TimeSlot current)
+    {
+        if (_timeGrid is not { } grid || _selectionStart is not { } start) return;
+        var slot = current.Date == start.Date ? current.Slot : start.Slot;
+        var first = Math.Min(start.Slot, slot);
+        var count = Math.Abs(slot - start.Slot) + 1;
+        if (_selectionBlock is null)
+        {
+            _selectionBlock = new Border
+            {
+                Margin = new Thickness(2, 1, 2, 1),
+                CornerRadius = new CornerRadius(4),
+                Background = MakeBrush(0x70, 0x38, 0x9B, 0x5A),
+                BorderBrush = Brushes.SeaGreen,
+                BorderThickness = new Thickness(1),
+                IsHitTestVisible = false,
+            };
+            Panel.SetZIndex(_selectionBlock, 4);
+            grid.Children.Add(_selectionBlock);
+        }
+        var day = start.Date.DayNumber - _timeRange!.Start.DayNumber;
+        Grid.SetColumn(_selectionBlock, day + 1);
+        Grid.SetRow(_selectionBlock, first + 1);
+        Grid.SetRowSpan(_selectionBlock, count);
+    }
+
+    private void ClearSelection(Grid grid)
+    {
+        grid.ReleaseMouseCapture();
+        if (_selectionBlock is not null) grid.Children.Remove(_selectionBlock);
+        _selectionBlock = null;
+        _selectionStart = null;
+    }
+
+    private TimeSlot? TimeSlotAt(Grid grid, Point point)
+    {
+        if (_timeRange is null || point.X < 64 || point.Y < 36 || grid.ActualWidth <= 64) return null;
+        var days = _timeRange.DayCount;
+        var dayWidth = (grid.ActualWidth - 64) / days;
+        var day = Math.Clamp((int)((point.X - 64) / dayWidth), 0, days - 1);
+        var slots = 24 * 60 / _resolutionMinutes;
+        var slot = Math.Clamp((int)((point.Y - 36) / _slotHeight), 0, slots - 1);
+        return new TimeSlot(_timeRange.Start.AddDays(day), slot);
+    }
+
+    private void TimeGrid_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(TicketDragFormat) && sender is Grid grid &&
+                    TimeSlotAt(grid, e.GetPosition(grid)) is not null
+            ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void TimeGrid_Drop(object sender, DragEventArgs e)
+    {
+        if (sender is not Grid grid || TimeSlotAt(grid, e.GetPosition(grid)) is not { } slot ||
+            e.Data.GetData(TicketDragFormat) is not string key) return;
+        var issue = _issues().FirstOrDefault(i => i.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+        if (issue is null) return;
+        await ShowAddWorklogAsync(slot.Date, slot.Slot, 1, issue);
+        e.Handled = true;
+    }
+
+    private async void NewWorklog_Click(object sender, RoutedEventArgs e)
+    {
+        var now = DateTime.Now;
+        var slot = WorklogCalendarLayout.SlotIndex(TimeOnly.FromDateTime(now), _resolutionMinutes);
+        await ShowAddWorklogAsync(_anchor, slot, 1, _issue);
+    }
+
+    private async Task ShowAddWorklogAsync(DateOnly date, int startSlot, int slotCount, JiraIssue selected)
+    {
+        var time = TimeOnly.MinValue.AddMinutes(startSlot * _resolutionMinutes);
+        var started = WorklogCalendarLayout.LocalDateTime(date, time, TimeZoneInfo.Local);
+        var dialog = new AddWorklogWindow(_issues(), selected, started,
+            TimeSpan.FromMinutes(Math.Max(1, slotCount) * _resolutionMinutes), _client) { Owner = this };
+        dialog.ShowDialog();
+        if (!dialog.WorklogSaved || dialog.SavedIssue is not { } saved) return;
+        if (!_issue.Key.Equals(saved.Key, StringComparison.OrdinalIgnoreCase))
+            FocusIssue(saved);
+        else
+            await RefreshAsync();
     }
 
     private string EntryTooltip(CalendarEntry entry) =>
@@ -385,4 +531,8 @@ public partial class WorklogCalendarWindow
         public DateOnly Date => DateOnly.FromDateTime(Started.DateTime);
         public DateTimeOffset Ended => Started.AddSeconds(Seconds);
     }
+
+    private sealed record TimeSlot(DateOnly Date, int Slot);
+
+    public const string TicketDragFormat = "JiraTaskBar.TicketKey";
 }

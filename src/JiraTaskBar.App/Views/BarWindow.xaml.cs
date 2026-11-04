@@ -30,6 +30,8 @@ public partial class BarWindow : Window
     private RECT _dragStartWindow;
     private DockEdge? _snapEdge;
     private MonitorInfo? _snapMonitor;
+    private Point _ticketDragStart;
+    private TicketViewModel? _ticketDragTicket;
 
     public BarWindow(BarViewModel vm, AppController app)
     {
@@ -135,6 +137,24 @@ public partial class BarWindow : Window
     {
         var style = GetWindowLongPtr(Hwnd, GWL_EXSTYLE).ToInt64();
         SetWindowLongPtr(Hwnd, GWL_EXSTYLE, new IntPtr(style | WS_EX_TOOLWINDOW));
+    }
+
+    private void Ticket_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _ticketDragStart = e.GetPosition(this);
+        _ticketDragTicket = (sender as FrameworkElement)?.DataContext as TicketViewModel;
+    }
+
+    private void Ticket_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _ticketDragTicket is not { } ticket) return;
+        var point = e.GetPosition(this);
+        if (Math.Abs(point.X - _ticketDragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(point.Y - _ticketDragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+        _ticketDragTicket = null;
+        var data = new DataObject(WorklogCalendarWindow.TicketDragFormat, ticket.Key);
+        DragDrop.DoDragDrop((DependencyObject)sender, data, DragDropEffects.Copy);
     }
 
     // ---- Dragging & snap-to-edge docking -------------------------------------------------

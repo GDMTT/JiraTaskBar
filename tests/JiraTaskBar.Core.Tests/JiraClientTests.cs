@@ -85,6 +85,19 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Worklog_description_is_sent_as_plain_text_adf()
+    {
+        var (client, handler) = Create();
+        handler.Respond("{}", HttpStatusCode.Created);
+
+        await client.AddWorklogAsync("ABC-1", DateTimeOffset.Now, 60, "first line\nsecond line");
+
+        var comment = JsonNode.Parse(handler.Requests.Single().Body!)!["comment"]!;
+        Assert.Equal("doc", comment["type"]!.GetValue<string>());
+        Assert.Equal(2, comment["content"]!.AsArray().Count);
+    }
+
+    [Fact]
     public async Task Worklog_history_is_parsed_and_paginated()
     {
         var (client, handler) = Create();
