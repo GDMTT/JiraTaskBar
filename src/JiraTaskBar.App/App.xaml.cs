@@ -14,6 +14,15 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // The release workflow runs the packaged executable on a clean Windows runner.
+        // Reaching this point proves that the single-file bundle and WPF resources loaded;
+        // exit before credentials, network access, or tray UI are required.
+        if (e.Args.Contains("--smoke-test", StringComparer.Ordinal))
+        {
+            Shutdown(0);
+            return;
+        }
+
         _singleInstance = new Mutex(true, @"Local\JiraTaskBar.SingleInstance", out var isFirst);
         if (!isFirst)
         {

@@ -65,9 +65,9 @@ The comment preview uses the Microsoft Edge WebView2 runtime, which comes with W
 ```
 ./build/publish.ps1 -CertificateThumbprint <code-signing cert thumbprint>
 ```
-This runs a locked restore and the tests, then publishes a self-contained single exe to `artifacts/publish`, signs it, and writes a SHA-256 file next to it. Without a certificate it builds unsigned and warns. Install the result under `%ProgramFiles%` so other processes can't replace the exe.
+This runs a locked restore and the tests, publishes a self-contained single exe to `artifacts/publish`, optionally signs it, starts the packaged exe in smoke-test mode, and writes a SHA-256 file next to it. The smoke test must exit successfully within 30 seconds and does not require Jira credentials or network access. Without a certificate it builds unsigned and warns. Install the result under `%ProgramFiles%` so other processes can't replace the exe.
 
-GitHub Actions runs locked restore, warning-free Release build, and all tests for pushes and pull requests. It also uploads an unsigned `JiraTaskBar.exe` and SHA-256 checksum as a workflow artifact. Pushing a tag whose name starts with `v` (for example `v1.1.0`) runs the release workflow and attaches those files to a GitHub Release. Use **Run workflow** on the Actions page to test packaging without creating a release.
+GitHub Actions runs locked restore, warning-free Release build, and all tests for pushes and pull requests. On its clean Windows runner it also starts the packaged executable in smoke-test mode, then uploads the unsigned `JiraTaskBar.exe` and SHA-256 checksum as a workflow artifact. Pushing a tag whose name starts with `v` (for example `v1.1.0`) runs the release workflow and attaches those files to a GitHub Release. Use **Run workflow** on the Actions page to test packaging without creating a release.
 
 CI binaries are unsigned until a managed code-signing certificate is configured. Treat the workflow artifact as a test build rather than a production installer until signing is enabled.
 
