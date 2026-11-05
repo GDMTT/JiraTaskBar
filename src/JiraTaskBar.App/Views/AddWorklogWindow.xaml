@@ -4,7 +4,7 @@
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="Add worklog" Width="610" SizeToContent="Height" ResizeMode="NoResize"
                  WindowStartupLocation="CenterOwner" ExtendsContentIntoTitleBar="True"
-                 WindowBackdropType="Mica" WindowCornerPreference="Round">
+                 WindowBackdropType="Mica" WindowCornerPreference="Round" Closing="Window_Closing">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

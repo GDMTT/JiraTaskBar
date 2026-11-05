@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using JiraTaskBar.Core.Jira;
@@ -10,6 +11,7 @@ public partial class AddWorklogWindow
 {
     private readonly IJiraClient _client;
     private bool _worklogSaved;
+    private bool _saving;
 
     public AddWorklogWindow(IReadOnlyList<JiraIssue> issues, JiraIssue selected,
         DateTimeOffset started, TimeSpan duration, IJiraClient client)
@@ -36,7 +38,8 @@ public partial class AddWorklogWindow
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
-        if (_worklogSaved || !TryRead(out var issue, out var started, out var seconds)) return;
+        if (_worklogSaved || _saving || !TryRead(out var issue, out var started, out var seconds)) return;
+        _saving = true;
         SaveButton.IsEnabled = CancelButton.IsEnabled = false;
         Status.Severity = InfoBarSeverity.Informational;
         Status.Message = "Saving to Jira…";
@@ -66,6 +69,7 @@ public partial class AddWorklogWindow
                     return;
                 }
             }
+            _saving = false;
             DialogResult = true;
         }
         catch (Exception ex)
@@ -73,6 +77,10 @@ public partial class AddWorklogWindow
             Status.Severity = InfoBarSeverity.Error;
             Status.Message = $"Could not save the worklog: {ex.Message}";
             SaveButton.IsEnabled = CancelButton.IsEnabled = true;
+        }
+        finally
+        {
+            _saving = false;
         }
     }
 
@@ -111,6 +119,15 @@ public partial class AddWorklogWindow
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
+
+    private void Window_Closing(object? sender, CancelEventArgs e)
+    {
+        if (!_saving) return;
+        e.Cancel = true;
+        Status.Severity = InfoBarSeverity.Informational;
+        Status.Message = "Please wait for Jira to finish saving the worklog.";
+        Status.IsOpen = true;
+    }
 
     private sealed record TicketChoice(JiraIssue Issue, string Display);
 }

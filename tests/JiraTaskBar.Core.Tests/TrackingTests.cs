@@ -305,6 +305,52 @@ public class WorklogCalendarLayoutTests
         Assert.Equal(TimeSpan.FromHours(1), instant.Offset);
         Assert.Equal(new DateTimeOffset(2026, 11, 1, 0, 30, 0, TimeSpan.Zero), instant.ToUniversalTime());
     }
+
+    [Fact]
+    public void Spring_forward_worklogs_and_selections_use_their_correct_time_basis()
+    {
+        var zone = DstZone();
+        var start = WorklogCalendarLayout.LocalDateTime(
+            new DateOnly(2026, 3, 1), new TimeOnly(1, 30), zone);
+
+        Assert.Equal(6, WorklogCalendarLayout.DisplaySlotSpan(start, 2 * 60 * 60, 30, zone));
+        Assert.Equal(60 * 60, WorklogCalendarLayout.SelectionSeconds(
+            new DateOnly(2026, 3, 1), 3, 4, 30, zone));
+    }
+
+    [Fact]
+    public void Repeated_autumn_hour_does_not_collapse_calendar_duration()
+    {
+        var zone = DstZone();
+        var start = WorklogCalendarLayout.LocalDateTime(
+            new DateOnly(2026, 11, 1), new TimeOnly(1, 30), zone);
+
+        Assert.Equal(4, WorklogCalendarLayout.DisplaySlotSpan(start, 2 * 60 * 60, 30, zone));
+        Assert.Equal(2 * 60 * 60, WorklogCalendarLayout.SelectionSeconds(
+            new DateOnly(2026, 11, 1), 3, 2, 30, zone));
+    }
+
+    [Fact]
+    public void Overlapping_entries_are_assigned_to_separate_lanes()
+    {
+        var lanes = WorklogCalendarLayout.AssignOverlapLanes([(18, 20), (18, 19), (20, 21)]);
+
+        Assert.NotEqual(lanes[0].Lane, lanes[1].Lane);
+        Assert.Equal(2, lanes[0].LaneCount);
+        Assert.Equal(2, lanes[2].LaneCount);
+    }
+
+    private static TimeZoneInfo DstZone()
+    {
+        var start = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0), 3, 1);
+        var end = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0), 11, 1);
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+            new DateTime(2026, 1, 1), new DateTime(2026, 12, 31), TimeSpan.FromHours(1), start, end);
+        return TimeZoneInfo.CreateCustomTimeZone(
+            "Test/CalendarDst", TimeSpan.Zero, "Test", "Standard", "Daylight", [rule]);
+    }
 }
 
 public class WorklogTests : IDisposable

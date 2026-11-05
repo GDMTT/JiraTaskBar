@@ -49,6 +49,59 @@ public static class WorklogCalendarLayout
         return Math.Max(1, (int)Math.Ceiling(Math.Max(0, seconds) / (double)slotSeconds));
     }
 
+    /// <summary>
+    /// Maps an elapsed worklog duration onto a wall-clock grid.  Spring-forward gaps need
+    /// extra rows, while repeated autumn hours cannot be represented twice in a 24-hour grid;
+    /// in that case the elapsed span is retained so the entry does not collapse.
+    /// </summary>
+    public static int DisplaySlotSpan(DateTimeOffset started, int seconds, int resolutionMinutes,
+        TimeZoneInfo timeZone)
+    {
+        var resolution = NormalizeResolution(resolutionMinutes);
+        var localStart = TimeZoneInfo.ConvertTime(started, timeZone).DateTime;
+        var localEnd = TimeZoneInfo.ConvertTime(started.AddSeconds(seconds), timeZone).DateTime;
+        var wallClockMinutes = Math.Max(0, (localEnd - localStart).TotalMinutes);
+        var elapsedMinutes = Math.Max(0, seconds / 60d);
+        return Math.Max(1, (int)Math.Ceiling(Math.Max(wallClockMinutes, elapsedMinutes) / resolution));
+    }
+
+    /// <summary>Returns the elapsed duration represented by local grid boundaries.</summary>
+    public static int SelectionSeconds(DateOnly date, int startSlot, int slotCount,
+        int resolutionMinutes, TimeZoneInfo timeZone)
+    {
+        var resolution = NormalizeResolution(resolutionMinutes);
+        var slotsPerDay = 24 * 60 / resolution;
+        var startMinutes = Math.Clamp(startSlot, 0, slotsPerDay - 1) * resolution;
+        var endMinutes = Math.Clamp(startSlot + Math.Max(1, slotCount), 1, slotsPerDay) * resolution;
+        var start = LocalDateTime(date, TimeOnly.MinValue.AddMinutes(startMinutes), timeZone);
+        var endDate = endMinutes == 24 * 60 ? date.AddDays(1) : date;
+        var endTime = endMinutes == 24 * 60 ? TimeOnly.MinValue : TimeOnly.MinValue.AddMinutes(endMinutes);
+        var end = LocalDateTime(endDate, endTime, timeZone);
+        return Math.Max(60, (int)Math.Round((end.ToUniversalTime() - start.ToUniversalTime()).TotalSeconds));
+    }
+
+    /// <summary>Assigns overlapping slot ranges to side-by-side lanes.</summary>
+    public static IReadOnlyList<(int Lane, int LaneCount)> AssignOverlapLanes(
+        IReadOnlyList<(int StartSlot, int EndSlot)> intervals)
+    {
+        if (intervals.Count == 0) return [];
+        var laneEnds = new List<int>();
+        var lanes = new int[intervals.Count];
+        foreach (var item in intervals.Select((value, index) => (value, index))
+                     .OrderBy(x => x.value.StartSlot).ThenBy(x => x.value.EndSlot))
+        {
+            var lane = laneEnds.FindIndex(end => end <= item.value.StartSlot);
+            if (lane < 0)
+            {
+                lane = laneEnds.Count;
+                laneEnds.Add(item.value.EndSlot);
+            }
+            else laneEnds[lane] = item.value.EndSlot;
+            lanes[item.index] = lane;
+        }
+        return lanes.Select(lane => (lane, laneEnds.Count)).ToList();
+    }
+
     /// <summary>Resolves a local calendar time, choosing the earliest instant if it repeats.</summary>
     public static DateTimeOffset LocalDateTime(DateOnly date, TimeOnly time, TimeZoneInfo timeZone)
     {

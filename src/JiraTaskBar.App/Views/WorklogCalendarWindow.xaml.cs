@@ -38,6 +38,8 @@ public partial class WorklogCalendarWindow
     private Border? _selectionBlock;
     private CalendarEdit? _calendarEdit;
     private bool _savingEdit;
+    private JiraIssue? _pendingFocusIssue;
+    private int _overlayLaneCount = 1;
 
     public WorklogCalendarWindow(JiraIssue issue, IJiraClient client,
         Func<IReadOnlyList<PendingWorklog>> pending, Func<IReadOnlyList<JiraIssue>>? issues = null,
@@ -60,6 +62,17 @@ public partial class WorklogCalendarWindow
 
     public void FocusIssue(JiraIssue issue)
     {
+        if (_calendarEdit is not null || _savingEdit)
+        {
+            _pendingFocusIssue = issue;
+            StatusText.Text = $"Finishing the current edit before opening {issue.Key}…";
+            return;
+        }
+        ApplyFocusIssue(issue);
+    }
+
+    private void ApplyFocusIssue(JiraIssue issue)
+    {
         var changed = !_issue.Key.Equals(issue.Key, StringComparison.OrdinalIgnoreCase);
         _issue = issue;
         WindowTitle.Title = $"Time calendar – {issue.Key}";
@@ -76,11 +89,11 @@ public partial class WorklogCalendarWindow
     private async void Window_Loaded(object sender, RoutedEventArgs e) => await RefreshAsync();
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
 
-    public async Task RefreshAsync()
+    public async Task<bool> RefreshAsync()
     {
-        if (_isClosed) return;
-        if (_calendarEdit is not null || _savingEdit) return;
+        if (_isClosed || _calendarEdit is not null || _savingEdit) return false;
         var version = ++_loadVersion;
+        var issueKey = _issue.Key;
         _load?.Cancel();
         var load = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
         _load = load;
@@ -88,19 +101,23 @@ public partial class WorklogCalendarWindow
         StatusText.Text = "Loading Jira worklogs…";
         try
         {
-            var worklogs = await _client.GetWorklogsAsync(_issue.Key, load.Token);
-            if (version != _loadVersion) return;
+            var worklogs = await _client.GetWorklogsAsync(issueKey, load.Token);
+            if (version != _loadVersion || _calendarEdit is not null || _savingEdit ||
+                !_issue.Key.Equals(issueKey, StringComparison.OrdinalIgnoreCase)) return false;
             _worklogs = worklogs;
             StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
             RenderScheduler();
+            return true;
         }
         catch (OperationCanceledException) when (load.IsCancellationRequested)
         {
+            return false;
         }
         catch (Exception ex)
         {
             if (version == _loadVersion)
                 StatusText.Text = $"Could not load worklogs: {ex.Message}";
+            return false;
         }
         finally
         {
@@ -229,7 +246,7 @@ public partial class WorklogCalendarWindow
 
     private TextBlock MonthEntry(CalendarEntry entry) => new()
     {
-        Text = $"{entry.Started:HH:mm}  {FormatDuration(entry.Seconds)}  {entry.Comment}",
+        Text = $"{entry.Started:HH:mm}  {FormatDuration(entry.Seconds)}  {entry.Author}  {entry.Comment}",
         TextTrimming = TextTrimming.CharacterEllipsis,
         FontSize = 11,
         Margin = new Thickness(0, 1, 0, 1),
@@ -273,6 +290,8 @@ public partial class WorklogCalendarWindow
         for (var slot = 0; slot < slots; slot++)
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(slotHeight) });
 
+        var renderedDays = new List<(List<RenderedEntry> Entries,
+            IReadOnlyList<(int Lane, int LaneCount)> Lanes)>();
         for (var day = 0; day < days; day++)
         {
             var date = range.Start.AddDays(day);
@@ -325,19 +344,48 @@ public partial class WorklogCalendarWindow
             }
         }
 
-        foreach (var entry in entries)
+        for (var day = 0; day < days; day++)
         {
-            var day = entry.Date.DayNumber - range.Start.DayNumber;
-            if (day < 0 || day >= days) continue;
-            var startSlot = WorklogCalendarLayout.SlotIndex(TimeOnly.FromDateTime(entry.Started.DateTime), _resolutionMinutes);
-            var span = Math.Min(slots - startSlot,
-                WorklogCalendarLayout.SlotSpan(entry.Seconds, _resolutionMinutes));
-            var block = WorklogBlock(entry);
-            Grid.SetColumn(block, day + 1);
-            Grid.SetRow(block, startSlot + 1);
-            Grid.SetRowSpan(block, Math.Max(1, span));
-            Panel.SetZIndex(block, 2);
-            grid.Children.Add(block);
+            var dayEntries = entries.Where(entry => entry.Date.DayNumber - range.Start.DayNumber == day)
+                .Select(entry =>
+                {
+                    var startSlot = WorklogCalendarLayout.SlotIndex(
+                        TimeOnly.FromDateTime(entry.Started.DateTime), _resolutionMinutes);
+                    var span = Math.Min(slots - startSlot, WorklogCalendarLayout.DisplaySlotSpan(
+                        entry.Started, entry.Seconds, _resolutionMinutes, TimeZoneInfo.Local));
+                    return new RenderedEntry(entry, startSlot, Math.Max(1, span));
+                }).ToList();
+            var lanes = WorklogCalendarLayout.AssignOverlapLanes(dayEntries
+                .Select(item => (item.StartSlot, item.StartSlot + item.Span)).ToList());
+            renderedDays.Add((dayEntries, lanes));
+        }
+
+        _overlayLaneCount = Math.Max(1, renderedDays
+            .SelectMany(day => day.Lanes).Select(lane => lane.LaneCount).DefaultIfEmpty(1).Max());
+        var overlay = new Grid();
+        for (var column = 0; column < days * _overlayLaneCount; column++)
+            overlay.ColumnDefinitions.Add(new ColumnDefinition());
+        for (var slot = 0; slot < slots; slot++)
+            overlay.RowDefinitions.Add(new RowDefinition { Height = new GridLength(slotHeight) });
+        Grid.SetColumn(overlay, 1);
+        Grid.SetColumnSpan(overlay, days);
+        Grid.SetRow(overlay, 1);
+        Grid.SetRowSpan(overlay, slots);
+        Panel.SetZIndex(overlay, 2);
+        grid.Children.Add(overlay);
+
+        for (var day = 0; day < renderedDays.Count; day++)
+        {
+            var renderedDay = renderedDays[day];
+            for (var index = 0; index < renderedDay.Entries.Count; index++)
+            {
+                var rendered = renderedDay.Entries[index];
+                var block = WorklogBlock(rendered.Entry);
+                Grid.SetColumn(block, day * _overlayLaneCount + renderedDay.Lanes[index].Lane);
+                Grid.SetRow(block, rendered.StartSlot);
+                Grid.SetRowSpan(block, rendered.Span);
+                overlay.Children.Add(block);
+            }
         }
 
         _timeScroll = new ScrollViewer
@@ -356,7 +404,8 @@ public partial class WorklogCalendarWindow
     {
         var text = new TextBlock
         {
-            Text = $"{entry.Started:HH:mm}–{entry.Ended:HH:mm}  {FormatDuration(entry.Seconds)}\n{_issue.Key}  {entry.Comment}",
+            Text = $"{entry.Started:HH:mm}–{entry.Ended:HH:mm}  {FormatDuration(entry.Seconds)}\n" +
+                   $"{entry.IssueKey} · {entry.Author}  {entry.Comment}",
             TextWrapping = TextWrapping.Wrap,
             TextTrimming = TextTrimming.CharacterEllipsis,
             Foreground = Brushes.White,
@@ -409,11 +458,11 @@ public partial class WorklogCalendarWindow
     {
         if (_savingEdit || sender is not Border { Tag: CalendarEntry entry } block || _timeGrid is null) return;
         var resize = e.GetPosition(block).Y >= Math.Max(0, block.ActualHeight - 12);
-        var row = Grid.GetRow(block) - 1;
+        var row = Grid.GetRow(block);
         var span = Grid.GetRowSpan(block);
         var pointer = TimeSlotAt(_timeGrid, e.GetPosition(_timeGrid));
         _calendarEdit = new CalendarEdit(entry, resize ? EditMode.Resize : EditMode.Move, block,
-            Grid.GetColumn(block) - 1, row, span,
+            entry.Date.DayNumber - _timeRange!.Start.DayNumber, row, span,
             pointer is null ? 0 : Math.Clamp(pointer.Slot - row, 0, Math.Max(0, span - 1)));
         block.CaptureMouse();
         StatusText.Text = resize ? "Drag the bottom edge to change duration…" : "Drag the worklog to a new time or day…";
@@ -429,8 +478,12 @@ public partial class WorklogCalendarWindow
         {
             var start = Math.Clamp(slot.Slot - edit.GrabOffset, 0, Math.Max(0, slots - edit.OriginalSpan));
             var day = slot.Date.DayNumber - _timeRange!.Start.DayNumber;
-            Grid.SetColumn(edit.Block, day + 1);
-            Grid.SetRow(edit.Block, start + 1);
+            if (edit.CurrentDay != day)
+            {
+                Grid.SetColumn(edit.Block, day * _overlayLaneCount);
+                edit.CurrentDay = day;
+            }
+            Grid.SetRow(edit.Block, start);
         }
         else
         {
@@ -445,19 +498,25 @@ public partial class WorklogCalendarWindow
         if (_calendarEdit is not { } edit || sender != edit.Block || _timeRange is null) return;
         _calendarEdit = null;
         edit.Block.ReleaseMouseCapture();
-        var day = Grid.GetColumn(edit.Block) - 1;
-        var slot = Grid.GetRow(edit.Block) - 1;
+        var day = edit.CurrentDay;
+        var slot = Grid.GetRow(edit.Block);
         var span = Grid.GetRowSpan(edit.Block);
         if (day == edit.OriginalDay && slot == edit.OriginalSlot && span == edit.OriginalSpan)
         {
             StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
+            RenderScheduler();
+            ApplyPendingFocus();
             return;
         }
 
         var date = _timeRange.Start.AddDays(day);
         var time = TimeOnly.MinValue.AddMinutes(slot * _resolutionMinutes);
-        var started = WorklogCalendarLayout.LocalDateTime(date, time, TimeZoneInfo.Local);
-        var seconds = span * _resolutionMinutes * 60;
+        var started = edit.Mode == EditMode.Resize
+            ? edit.Entry.Started
+            : WorklogCalendarLayout.LocalDateTime(date, time, TimeZoneInfo.Local);
+        var seconds = edit.Mode == EditMode.Move
+            ? edit.Entry.Seconds
+            : ResizeSeconds(edit.Entry.Started, date, slot + span);
         await SaveCalendarEditAsync(edit.Entry, started, seconds);
         e.Handled = true;
     }
@@ -468,15 +527,17 @@ public partial class WorklogCalendarWindow
         _calendarEdit = null;
         StatusText.Text = "Edit cancelled.";
         RenderScheduler();
+        ApplyPendingFocus();
     }
 
     private async Task SaveCalendarEditAsync(CalendarEntry entry, DateTimeOffset started, int seconds)
     {
         _savingEdit = true;
+        var issueKey = entry.IssueKey;
         StatusText.Text = "Checking the latest Jira worklog…";
         try
         {
-            var latest = await _client.GetWorklogsAsync(_issue.Key, _closed.Token);
+            var latest = await _client.GetWorklogsAsync(issueKey, _closed.Token);
             var current = latest.FirstOrDefault(w => w.Id == entry.Id);
             if (current is null || current.Started.ToUniversalTime() != entry.Started.ToUniversalTime() ||
                 current.TimeSpentSeconds != entry.Seconds || !string.Equals(current.Comment ?? string.Empty,
@@ -489,10 +550,16 @@ public partial class WorklogCalendarWindow
             }
 
             StatusText.Text = "Saving the changed worklog to Jira…";
-            await _client.UpdateWorklogAsync(_issue.Key, current, started, seconds, _closed.Token);
+            await _client.UpdateWorklogAsync(issueKey, current, started, seconds, _closed.Token);
+            var updated = current with { Started = started, TimeSpentSeconds = seconds };
+            if (_issue.Key.Equals(issueKey, StringComparison.OrdinalIgnoreCase))
+            {
+                _worklogs = latest.Select(worklog => worklog.Id == updated.Id ? updated : worklog).ToList();
+                RenderScheduler();
+            }
             _savingEdit = false;
-            await RefreshAsync();
-            StatusText.Text = "Worklog updated in Jira.";
+            if (ApplyPendingFocus()) return;
+            if (await RefreshAsync()) StatusText.Text = "Worklog updated in Jira.";
         }
         catch (OperationCanceledException) when (_closed.IsCancellationRequested)
         {
@@ -505,6 +572,7 @@ public partial class WorklogCalendarWindow
         finally
         {
             _savingEdit = false;
+            ApplyPendingFocus();
         }
     }
 
@@ -615,8 +683,13 @@ public partial class WorklogCalendarWindow
     {
         var time = TimeOnly.MinValue.AddMinutes(startSlot * _resolutionMinutes);
         var started = WorklogCalendarLayout.LocalDateTime(date, time, TimeZoneInfo.Local);
+        var seconds = WorklogCalendarLayout.SelectionSeconds(
+            date, startSlot, slotCount, _resolutionMinutes, TimeZoneInfo.Local);
         var dialog = new AddWorklogWindow(_issues(), selected, started,
-            TimeSpan.FromMinutes(Math.Max(1, slotCount) * _resolutionMinutes), _client) { Owner = this };
+            TimeSpan.FromSeconds(seconds), _client)
+        {
+            Owner = this,
+        };
         dialog.ShowDialog();
         if (!dialog.WorklogSaved || dialog.SavedIssue is not { } saved) return;
         if (!_issue.Key.Equals(saved.Key, StringComparison.OrdinalIgnoreCase))
@@ -626,17 +699,37 @@ public partial class WorklogCalendarWindow
     }
 
     private string EntryTooltip(CalendarEntry entry) =>
-        $"{_issue.Key}\n{entry.Started:dddd, d MMMM yyyy HH:mm}–{entry.Ended:HH:mm}\n" +
+        $"{entry.IssueKey} · {entry.Author}\n{entry.Started:dddd, d MMMM yyyy HH:mm}–{entry.Ended:HH:mm}\n" +
         $"{FormatDuration(entry.Seconds)} · {(entry.Pending ? "Pending locally" : "Saved in Jira")}" +
         (string.IsNullOrWhiteSpace(entry.Comment) ? string.Empty : $"\n{entry.Comment}");
 
     private IReadOnlyList<CalendarEntry> Entries() => _worklogs
-        .Select(w => new CalendarEntry(w.Id, w.Started.ToLocalTime(), w.TimeSpentSeconds, w.Comment ?? string.Empty, false))
+        .Select(w => new CalendarEntry(w.Id, w.IssueKey, w.Started.ToLocalTime(), w.TimeSpentSeconds,
+            w.Author, w.Comment ?? string.Empty, false))
         .Concat(_pending()
             .Where(p => p.Key.Equals(_issue.Key, StringComparison.OrdinalIgnoreCase))
-            .Select(p => new CalendarEntry(p.Id.ToString("N"), p.StartedUtc.ToLocalTime(), p.Seconds,
-                p.LastError ?? string.Empty, true)))
+            .Select(p => new CalendarEntry(p.Id.ToString("N"), p.Key, p.StartedUtc.ToLocalTime(), p.Seconds,
+                "Pending local worklog", p.LastError ?? string.Empty, true)))
         .ToList();
+
+    private int ResizeSeconds(DateTimeOffset started, DateOnly date, int endSlot)
+    {
+        var slotsPerDay = 24 * 60 / _resolutionMinutes;
+        var endDate = endSlot >= slotsPerDay ? date.AddDays(1) : date;
+        var endTime = endSlot >= slotsPerDay
+            ? TimeOnly.MinValue
+            : TimeOnly.MinValue.AddMinutes(endSlot * _resolutionMinutes);
+        var end = WorklogCalendarLayout.LocalDateTime(endDate, endTime, TimeZoneInfo.Local);
+        return Math.Max(60, (int)Math.Round((end.ToUniversalTime() - started.ToUniversalTime()).TotalSeconds));
+    }
+
+    private bool ApplyPendingFocus()
+    {
+        if (_pendingFocusIssue is not { } pending) return false;
+        _pendingFocusIssue = null;
+        ApplyFocusIssue(pending);
+        return true;
+    }
 
     private string RangeLabel(WorklogCalendarRange range) => _view switch
     {
@@ -666,18 +759,31 @@ public partial class WorklogCalendarWindow
         return brush;
     }
 
-    private sealed record CalendarEntry(string Id, DateTimeOffset Started, int Seconds, string Comment, bool Pending)
+    private sealed record CalendarEntry(string Id, string IssueKey, DateTimeOffset Started, int Seconds,
+        string Author, string Comment, bool Pending)
     {
         public DateOnly Date => DateOnly.FromDateTime(Started.DateTime);
-        public DateTimeOffset Ended => Started.AddSeconds(Seconds);
+        public DateTimeOffset Ended => Started.AddSeconds(Seconds).ToLocalTime();
     }
+
+    private sealed record RenderedEntry(CalendarEntry Entry, int StartSlot, int Span);
 
     private sealed record TimeSlot(DateOnly Date, int Slot);
 
     private enum EditMode { Move, Resize }
 
-    private sealed record CalendarEdit(CalendarEntry Entry, EditMode Mode, Border Block,
-        int OriginalDay, int OriginalSlot, int OriginalSpan, int GrabOffset);
+    private sealed class CalendarEdit(CalendarEntry entry, EditMode mode, Border block,
+        int originalDay, int originalSlot, int originalSpan, int grabOffset)
+    {
+        public CalendarEntry Entry { get; } = entry;
+        public EditMode Mode { get; } = mode;
+        public Border Block { get; } = block;
+        public int OriginalDay { get; } = originalDay;
+        public int OriginalSlot { get; } = originalSlot;
+        public int OriginalSpan { get; } = originalSpan;
+        public int GrabOffset { get; } = grabOffset;
+        public int CurrentDay { get; set; } = originalDay;
+    }
 
     public const string TicketDragFormat = "JiraTaskBar.TicketKey";
 }
