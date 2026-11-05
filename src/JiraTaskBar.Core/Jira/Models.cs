@@ -27,7 +27,8 @@ public sealed record JiraWorklog(
     DateTimeOffset Started,
     int TimeSpentSeconds,
     string Author,
-    string? Comment);
+    string? Comment,
+    System.Text.Json.Nodes.JsonNode? CommentDocument = null);
 
 /// <param name="SiteUrl">The Jira site, used for browser links (and for REST calls with a classic token).</param>
 /// <param name="CloudId">

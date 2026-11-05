@@ -3,6 +3,7 @@ using System.Windows;
 using JiraTaskBar.App.Services;
 using JiraTaskBar.Core.Jira;
 using JiraTaskBar.Core.Storage;
+using JiraTaskBar.Core.Tracking;
 using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
 
@@ -33,6 +34,11 @@ public partial class SettingsWindow : FluentWindow
         RefreshBox.Value = current.RefreshMinutes;
         IdleBox.Value = current.IdlePromptMinutes;
         ShortSessionBox.SelectedIndex = current.ShortSessions == ShortSessionMode.RoundUpToMinute ? 0 : 1;
+        CalendarResolutionBox.ItemsSource = WorklogCalendarLayout.SupportedResolutions
+            .Select(minutes => $"{minutes} minutes").ToList();
+        var resolutionIndex = Array.IndexOf(WorklogCalendarLayout.SupportedResolutions,
+            WorklogCalendarLayout.NormalizeResolution(current.CalendarResolutionMinutes));
+        CalendarResolutionBox.SelectedIndex = resolutionIndex;
         StartupSwitch.IsChecked = current.StartWithWindows;
         HideFromCaptureSwitch.IsChecked = current.HideFromScreenCapture;
         ShowTitlesSwitch.IsChecked = current.ShowTitlesOnBar;
@@ -99,6 +105,8 @@ public partial class SettingsWindow : FluentWindow
             RefreshMinutes = (int)Math.Clamp(RefreshBox.Value ?? 5, 1, 120),
             IdlePromptMinutes = (int)Math.Clamp(IdleBox.Value ?? 10, 0, 480),
             ShortSessions = ShortSessionBox.SelectedIndex == 0 ? ShortSessionMode.RoundUpToMinute : ShortSessionMode.Skip,
+            CalendarResolutionMinutes = WorklogCalendarLayout.SupportedResolutions[
+                Math.Max(0, CalendarResolutionBox.SelectedIndex)],
             StartWithWindows = StartupSwitch.IsChecked == true,
             HideFromScreenCapture = HideFromCaptureSwitch.IsChecked == true,
             ShowTitlesOnBar = ShowTitlesSwitch.IsChecked == true,

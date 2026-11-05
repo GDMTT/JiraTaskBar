@@ -34,7 +34,10 @@ Buttons are sorted by Jira priority (priority 1 first) and then by key. The colo
 - Sessions under a minute are logged as 1 minute or skipped, depending on a setting.
 
 ### Time review and context switching
-- Choose **View time calendar…** from a ticket's right-click menu to review saved Jira worklogs and clearly marked pending local worklogs by day.
+- Choose **View time calendar…** from a ticket's right-click menu to review saved Jira worklogs and clearly marked pending local worklogs in Month, Week, or Day view.
+- Set the calendar resolution to 5, 10, 15, 30, or 60 minutes in Settings. Day/Week selections, moves, and duration changes snap to that interval.
+- Drag across an empty Day/Week time range, click **New worklog…**, or drag a ticket from JiraTaskBar onto the calendar to create a worklog. Its description can be stored on the worklog or posted as a safe internal ticket comment.
+- Drag a saved worklog to move it within the week; drag its bottom handle to change duration. Jira is checked for a newer version before saving. Pending local worklogs remain read-only until Jira accepts them.
 - Choose **Context switching…** from the application or tray menu to review uninterrupted intervals, active time, ticket totals, and direct ticket-to-ticket transitions for a date range.
 - Context history stays in `%LOCALAPPDATA%\JiraTaskBar\context-switch-history.json`; it is never sent to Jira or an analytics service. It is retained until you use **Delete local history…** in the report.
 

@@ -31,7 +31,7 @@ public sealed class AppController : IDisposable
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _refresh = new();
     private readonly Dictionary<string, CommentWindow> _commentWindows = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, WorklogCalendarWindow> _worklogWindows = new(StringComparer.OrdinalIgnoreCase);
+    private WorklogCalendarWindow? _worklogWindow;
     private readonly List<Task> _inflightWorklogs = [];
 
     private HttpClient? _http;
@@ -139,7 +139,8 @@ public sealed class AppController : IDisposable
     {
         // Calendar windows retain the client they were opened with. Close them before replacing
         // and disposing that client so reopening always uses the current connection.
-        foreach (var window in _worklogWindows.Values.ToList()) window.Close();
+        _worklogWindow?.Close();
+        _worklogWindow = null;
         _http?.Dispose();
         _http = null;
         Client = null;
@@ -293,16 +294,17 @@ public sealed class AppController : IDisposable
     public void OpenWorklogCalendar(TicketViewModel ticket)
     {
         if (Client is null) return;
-        if (_worklogWindows.TryGetValue(ticket.Key, out var existing))
+        if (_worklogWindow is not null)
         {
-            existing.Activate();
+            _worklogWindow.FocusIssue(ticket.Issue);
+            _worklogWindow.Activate();
             return;
         }
 
-        var window = new WorklogCalendarWindow(ticket.Issue, Client, () => Worklogs.Pending);
-        _worklogWindows[ticket.Key] = window;
-        window.Closed += (_, _) => _worklogWindows.Remove(ticket.Key);
-        window.Show();
+        _worklogWindow = new WorklogCalendarWindow(ticket.Issue, Client, () => Worklogs.Pending,
+            () => Bar.Tickets.Select(t => t.Issue).ToList(), Settings.CalendarResolutionMinutes);
+        _worklogWindow.Closed += (_, _) => _worklogWindow = null;
+        _worklogWindow.Show();
     }
 
     private async Task PostWorklogAsync(CompletedSession session)
@@ -332,9 +334,9 @@ public sealed class AppController : IDisposable
             return;
         }
 
-        foreach (var window in _worklogWindows.Values)
-            if (issueKey is null || window.IssueKey.Equals(issueKey, StringComparison.OrdinalIgnoreCase))
-                _ = window.RefreshAsync();
+        if (_worklogWindow is { } window &&
+            (issueKey is null || window.IssueKey.Equals(issueKey, StringComparison.OrdinalIgnoreCase)))
+            _ = window.RefreshAsync();
     }
 
     private void RefreshPendingWorklogState()
@@ -795,7 +797,7 @@ public sealed class AppController : IDisposable
         await Task.WhenAny(Task.WhenAll(inflight), Task.Delay(TimeSpan.FromSeconds(10)));
 
         foreach (var w in _commentWindows.Values.ToList()) w.ForceClose();
-        foreach (var w in _worklogWindows.Values.ToList()) w.Close();
+        _worklogWindow?.Close();
         _contextReportWindow?.Close();
         _bar?.Close();
         _app.Shutdown();

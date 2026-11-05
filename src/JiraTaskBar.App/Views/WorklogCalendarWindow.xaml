@@ -3,7 +3,7 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="Time calendar"
-                 Width="850" Height="560" MinWidth="700" MinHeight="440"
+                 Width="1120" Height="720" MinWidth="760" MinHeight="520"
                  WindowStartupLocation="CenterScreen"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica"
@@ -13,40 +13,50 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <ui:TitleBar x:Name="WindowTitle" Title="Time calendar" />
 
-        <DockPanel Grid.Row="1" Margin="20,8,20,12">
-            <ui:Button x:Name="RefreshButton" DockPanel.Dock="Right" Content="Refresh" Click="Refresh_Click" />
+        <DockPanel Grid.Row="1" Margin="20,8,20,10" LastChildFill="True">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <ui:Button Content="‹" FontSize="22" Padding="10,2" ToolTip="Previous" Click="Previous_Click" />
+                <ui:Button Content="Today" Margin="6,0" Click="Today_Click" />
+                <ui:Button Content="›" FontSize="22" Padding="10,2" ToolTip="Next" Click="Next_Click" />
+                <ComboBox x:Name="ViewModeBox" Width="110" Margin="12,0,0,0"
+                          SelectionChanged="ViewMode_Changed">
+                    <ComboBoxItem Content="Month" />
+                    <ComboBoxItem Content="Week" />
+                    <ComboBoxItem Content="Day" />
+                </ComboBox>
+                <ui:Button Margin="8,0,0,0" Content="New worklog…" Appearance="Primary" Click="NewWorklog_Click" />
+                <ui:Button x:Name="RefreshButton" Margin="8,0,0,0" Content="Refresh" Click="Refresh_Click" />
+            </StackPanel>
             <StackPanel>
-                <TextBlock x:Name="TicketTitle" FontWeight="SemiBold" FontSize="15" />
-                <TextBlock x:Name="StatusText" Opacity="0.7" Text="Loading Jira worklogs…" />
+                <TextBlock x:Name="RangeTitle" FontWeight="SemiBold" FontSize="16" />
+                <TextBlock x:Name="TicketTitle" Opacity="0.75" />
             </StackPanel>
         </DockPanel>
 
-        <Grid Grid.Row="2" Margin="20,0,20,12">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <Calendar x:Name="DateCalendar" Margin="0,0,16,0" SelectionMode="SingleDate"
-                      SelectedDatesChanged="Calendar_SelectedDatesChanged" />
-            <GroupBox Grid.Column="1" x:Name="DayGroup" Header="Selected day">
-                <DataGrid x:Name="WorklogGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
-                          HeadersVisibility="Column" GridLinesVisibility="Horizontal">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="Auto" />
-                        <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="Auto" />
-                        <DataGridTextColumn Header="Author" Binding="{Binding Author}" Width="Auto" />
-                        <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="Auto" />
-                        <DataGridTextColumn Header="Comment" Binding="{Binding Comment}" Width="*" />
-                    </DataGrid.Columns>
-                </DataGrid>
-            </GroupBox>
-        </Grid>
+        <Border Grid.Row="2" Margin="20,0,20,8" Padding="10,6" CornerRadius="5"
+                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+            <DockPanel>
+                <TextBlock x:Name="ResolutionText" DockPanel.Dock="Right" Opacity="0.65" />
+                <TextBlock x:Name="StatusText" Opacity="0.75" Text="Loading Jira worklogs…" />
+            </DockPanel>
+        </Border>
 
-        <DockPanel Grid.Row="3" LastChildFill="False" Margin="20,0,20,18">
-            <TextBlock x:Name="DayTotal" VerticalAlignment="Center" FontWeight="SemiBold" />
+        <Border Grid.Row="3" Margin="20,0,20,10" BorderThickness="1" CornerRadius="5"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" ClipToBounds="True">
+            <Grid x:Name="SchedulerHost" Background="{DynamicResource ApplicationBackgroundBrush}" />
+        </Border>
+
+        <DockPanel Grid.Row="4" LastChildFill="False" Margin="20,0,20,18">
+            <TextBlock x:Name="RangeTotal" VerticalAlignment="Center" FontWeight="SemiBold" />
+            <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Opacity="0.6"
+                       Text="Saved Jira worklogs are blue; pending local worklogs are amber." />
             <ui:Button DockPanel.Dock="Right" Content="Close" Click="Close_Click" />
         </DockPanel>
     </Grid>

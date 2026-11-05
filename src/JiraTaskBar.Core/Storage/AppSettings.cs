@@ -33,6 +33,8 @@ public sealed class AppSettings
     public ShortSessionMode ShortSessions { get; set; } = ShortSessionMode.RoundUpToMinute;
     /// <summary>Prompt to exclude time away (lock/sleep) when the gap is at least this long. 0 disables.</summary>
     public int IdlePromptMinutes { get; set; } = 10;
+    /// <summary>Minute interval used to divide and snap the Day/Week worklog calendar.</summary>
+    public int CalendarResolutionMinutes { get; set; } = 30;
     public bool StartWithWindows { get; set; }
 
     /// <summary>Exclude the bar (and its tooltips/menus) from screen sharing, screenshots and recordings.</summary>

@@ -1,0 +1,63 @@
+<ui:FluentWindow x:Class="JiraTaskBar.App.Views.AddWorklogWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="Add worklog" Width="610" SizeToContent="Height" ResizeMode="NoResize"
+                 WindowStartupLocation="CenterOwner" ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica" WindowCornerPreference="Round" Closing="Window_Closing">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <ui:TitleBar Title="Add worklog" ShowMaximize="False" ShowMinimize="False" />
+        <Grid Grid.Row="1" Margin="22,12,22,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="145" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="125" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="Date and start time" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <DatePicker x:Name="StartDate" Grid.Row="0" Grid.Column="1" />
+            <TextBlock Grid.Row="0" Grid.Column="3" Text="Duration" FontWeight="SemiBold" Margin="0,-18,0,0" />
+            <ui:TextBox x:Name="DurationBox" Grid.Row="0" Grid.Column="3" Margin="0,18,0,0"
+                        PlaceholderText="1:00" ToolTip="Hours and minutes, for example 1:30" />
+
+            <ui:TextBox x:Name="StartTimeBox" Grid.Row="1" Grid.Column="1" Margin="0,6,0,12"
+                        PlaceholderText="09:00" ToolTip="Local start time" />
+
+            <TextBlock Grid.Row="2" Text="Ticket" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <ComboBox x:Name="TicketBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,12"
+                      IsTextSearchEnabled="True" TextSearch.TextPath="Display" DisplayMemberPath="Display" />
+
+            <TextBlock Grid.Row="3" Text="Description" FontWeight="SemiBold" VerticalAlignment="Top" />
+            <ui:TextBox x:Name="DescriptionBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3"
+                        AcceptsReturn="True" TextWrapping="Wrap" MinLines="4" MaxLines="8"
+                        PlaceholderText="What work was completed?" Margin="0,0,0,12" />
+
+            <TextBlock Grid.Row="4" Text="Save description as" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <ComboBox x:Name="DescriptionTargetBox" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,0,0,12">
+                <ComboBoxItem Content="Worklog description" />
+                <ComboBoxItem Content="Ticket comment (internal)" />
+            </ComboBox>
+
+            <ui:InfoBar x:Name="Status" Grid.Row="5" Grid.ColumnSpan="4" IsClosable="False" IsOpen="False" Margin="0,0,0,12" />
+            <DockPanel Grid.Row="6" Grid.ColumnSpan="4" LastChildFill="False">
+                <ui:Button x:Name="CancelButton" Content="Cancel" DockPanel.Dock="Right" Margin="8,0,0,0" Click="Cancel_Click" />
+                <ui:Button x:Name="SaveButton" Content="Save" Appearance="Primary" DockPanel.Dock="Right"
+                           IsDefault="True" Click="Save_Click" />
+            </DockPanel>
+        </Grid>
+    </Grid>
+</ui:FluentWindow>

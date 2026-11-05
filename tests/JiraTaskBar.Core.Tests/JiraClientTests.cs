@@ -85,6 +85,52 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Worklog_description_is_sent_as_plain_text_adf()
+    {
+        var (client, handler) = Create();
+        handler.Respond("{}", HttpStatusCode.Created);
+
+        await client.AddWorklogAsync("ABC-1", DateTimeOffset.Now, 60, "first line\nsecond line");
+
+        var comment = JsonNode.Parse(handler.Requests.Single().Body!)!["comment"]!;
+        Assert.Equal("doc", comment["type"]!.GetValue<string>());
+        Assert.Equal(2, comment["content"]!.AsArray().Count);
+    }
+
+    [Fact]
+    public async Task Existing_worklog_can_be_moved_and_resized()
+    {
+        var (client, handler) = Create();
+        handler.Respond("{}", HttpStatusCode.OK);
+        var moved = new DateTimeOffset(2026, 11, 6, 13, 30, 0, TimeSpan.FromHours(13));
+
+        var original = new JiraWorklog("12345", "ABC-1", DateTimeOffset.Now, 60, "Pat", "updated",
+            JsonNode.Parse("""{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"up"},{"type":"text","text":"dated","marks":[{"type":"strong"}]}]}]}"""));
+
+        await client.UpdateWorklogAsync("ABC-1", original, moved, 5400);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Put, request.Method);
+        Assert.Equal("/rest/api/3/issue/ABC-1/worklog/12345", request.PathAndQuery);
+        var body = JsonNode.Parse(request.Body!)!;
+        Assert.Equal(5400, body["timeSpentSeconds"]!.GetValue<int>());
+        Assert.Equal("dated", body["comment"]!["content"]![0]!["content"]![1]!["text"]!.GetValue<string>());
+        Assert.Equal("strong", body["comment"]!["content"]![0]!["content"]![1]!["marks"]![0]!["type"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("../1")]
+    [InlineData("abc")]
+    public async Task Worklog_update_rejects_unsafe_ids(string id)
+    {
+        var (client, _) = Create();
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.UpdateWorklogAsync("ABC-1",
+                new JiraWorklog(id, "ABC-1", DateTimeOffset.Now, 60, "Pat", null), DateTimeOffset.Now, 60));
+    }
+
+    [Fact]
     public async Task Worklog_history_is_parsed_and_paginated()
     {
         var (client, handler) = Create();

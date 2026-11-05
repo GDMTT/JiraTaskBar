@@ -245,6 +245,114 @@ public class ContextSwitchHistoryTests : IDisposable
     }
 }
 
+public class WorklogCalendarLayoutTests
+{
+    [Fact]
+    public void Ranges_follow_the_selected_view_and_first_day_of_week()
+    {
+        var anchor = new DateOnly(2026, 11, 5);
+
+        var day = WorklogCalendarLayout.RangeFor(WorklogCalendarView.Day, anchor, DayOfWeek.Monday);
+        var week = WorklogCalendarLayout.RangeFor(WorklogCalendarView.Week, anchor, DayOfWeek.Monday);
+        var month = WorklogCalendarLayout.RangeFor(WorklogCalendarView.Month, anchor, DayOfWeek.Monday);
+
+        Assert.Equal(new DateOnly(2026, 11, 5), day.Start);
+        Assert.Equal(1, day.DayCount);
+        Assert.Equal(new DateOnly(2026, 11, 2), week.Start);
+        Assert.Equal(7, week.DayCount);
+        Assert.Equal(new DateOnly(2026, 11, 1), month.Start);
+        Assert.Equal(new DateOnly(2026, 12, 1), month.EndExclusive);
+    }
+
+    [Theory]
+    [InlineData(5, 61, 1)]
+    [InlineData(15, 901, 2)]
+    [InlineData(30, 3600, 2)]
+    [InlineData(17, 3600, 2)] // unsupported values normalize to 30 minutes
+    public void Worklog_spans_round_up_to_whole_resolution_slots(int resolution, int seconds, int expected)
+    {
+        Assert.Equal(expected, WorklogCalendarLayout.SlotSpan(seconds, resolution));
+    }
+
+    [Fact]
+    public void Navigation_moves_by_the_active_view()
+    {
+        var anchor = new DateOnly(2026, 11, 5);
+
+        Assert.Equal(new DateOnly(2026, 11, 6),
+            WorklogCalendarLayout.Move(anchor, WorklogCalendarView.Day, 1));
+        Assert.Equal(new DateOnly(2026, 10, 29),
+            WorklogCalendarLayout.Move(anchor, WorklogCalendarView.Week, -1));
+        Assert.Equal(new DateOnly(2026, 12, 5),
+            WorklogCalendarLayout.Move(anchor, WorklogCalendarView.Month, 1));
+    }
+
+    [Fact]
+    public void Ambiguous_local_time_uses_the_earliest_instant()
+    {
+        var start = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0), 3, 1);
+        var end = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0), 11, 1);
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+            new DateTime(2026, 1, 1), new DateTime(2026, 12, 31), TimeSpan.FromHours(1), start, end);
+        var zone = TimeZoneInfo.CreateCustomTimeZone(
+            "Test/Ambiguous", TimeSpan.Zero, "Test", "Standard", "Daylight", [rule]);
+
+        var instant = WorklogCalendarLayout.LocalDateTime(
+            new DateOnly(2026, 11, 1), new TimeOnly(1, 30), zone);
+
+        Assert.Equal(TimeSpan.FromHours(1), instant.Offset);
+        Assert.Equal(new DateTimeOffset(2026, 11, 1, 0, 30, 0, TimeSpan.Zero), instant.ToUniversalTime());
+    }
+
+    [Fact]
+    public void Spring_forward_worklogs_and_selections_use_their_correct_time_basis()
+    {
+        var zone = DstZone();
+        var start = WorklogCalendarLayout.LocalDateTime(
+            new DateOnly(2026, 3, 1), new TimeOnly(1, 30), zone);
+
+        Assert.Equal(6, WorklogCalendarLayout.DisplaySlotSpan(start, 2 * 60 * 60, 30, zone));
+        Assert.Equal(60 * 60, WorklogCalendarLayout.SelectionSeconds(
+            new DateOnly(2026, 3, 1), 3, 4, 30, zone));
+    }
+
+    [Fact]
+    public void Repeated_autumn_hour_does_not_collapse_calendar_duration()
+    {
+        var zone = DstZone();
+        var start = WorklogCalendarLayout.LocalDateTime(
+            new DateOnly(2026, 11, 1), new TimeOnly(1, 30), zone);
+
+        Assert.Equal(4, WorklogCalendarLayout.DisplaySlotSpan(start, 2 * 60 * 60, 30, zone));
+        Assert.Equal(2 * 60 * 60, WorklogCalendarLayout.SelectionSeconds(
+            new DateOnly(2026, 11, 1), 3, 2, 30, zone));
+    }
+
+    [Fact]
+    public void Overlapping_entries_are_assigned_to_separate_lanes()
+    {
+        var lanes = WorklogCalendarLayout.AssignOverlapLanes([(18, 20), (18, 19), (20, 21)]);
+
+        Assert.NotEqual(lanes[0].Lane, lanes[1].Lane);
+        Assert.Equal(2, lanes[0].LaneCount);
+        Assert.Equal(2, lanes[2].LaneCount);
+    }
+
+    private static TimeZoneInfo DstZone()
+    {
+        var start = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0), 3, 1);
+        var end = TimeZoneInfo.TransitionTime.CreateFixedDateRule(
+            new DateTime(1, 1, 1, 2, 0, 0), 11, 1);
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+            new DateTime(2026, 1, 1), new DateTime(2026, 12, 31), TimeSpan.FromHours(1), start, end);
+        return TimeZoneInfo.CreateCustomTimeZone(
+            "Test/CalendarDst", TimeSpan.Zero, "Test", "Standard", "Daylight", [rule]);
+    }
+}
+
 public class WorklogTests : IDisposable
 {
     private readonly TempDir _dir = new();
