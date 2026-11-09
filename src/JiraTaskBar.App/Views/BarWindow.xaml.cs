@@ -54,6 +54,12 @@ public partial class BarWindow : Window
 
     public DockEdge DockEdge => _appBar.Edge;
 
+    private void Filter_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new TicketFilterWindow(_vm.Filter, _vm.AvailableTypes) { Owner = this };
+        if (dialog.ShowDialog() == true) _vm.ApplyFilter(dialog.Filter);
+    }
+
     private IntPtr Hwnd => new WindowInteropHelper(this).Handle;
 
     /// <summary>Docks the bar to an edge of <paramref name="monitor"/>, or floats it there.</summary>

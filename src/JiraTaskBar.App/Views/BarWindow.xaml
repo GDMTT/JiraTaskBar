@@ -129,6 +129,8 @@
         </Border>
 
         <StackPanel x:Name="Footer" DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="2">
+            <ui:Button Content="{Binding FilterLabel}" ToolTip="{Binding FilterTooltip}" Click="Filter_Click"
+                       Appearance="Transparent" Padding="3" MinWidth="0" MinHeight="0" FontSize="10" />
             <ui:Button Appearance="Transparent" Padding="5" MinWidth="0" MinHeight="0"
                        Icon="{ui:SymbolIcon Warning24}" Foreground="#F5A623"
                        Visibility="{Binding HasPending, Converter={StaticResource BoolToVisibility}}"

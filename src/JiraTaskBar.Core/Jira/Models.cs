@@ -12,6 +12,7 @@ public sealed record JiraIssue(
     string ProjectTypeKey,
     string IssueType,
     string? IssueTypeAvatarId = null,
+    int? RemainingEstimateSeconds = null,
     DateTimeOffset? CreatedAt = null,
     DateOnly? DueDate = null)
 {
