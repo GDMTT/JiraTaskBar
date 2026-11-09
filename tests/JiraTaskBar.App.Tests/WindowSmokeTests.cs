@@ -39,6 +39,22 @@ public class WindowSmokeTests
             bar.PlaceFloating(null, null, monitor);
             bar.UpdateLayout();
             Assert.True(bar.ActualHeight > 0);
+            typeof(BarViewModel).GetField("_lastIssues", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(controller.Bar, new[] { issue });
+            controller.Tracker.Start(issue.Key);
+            controller.Bar.ApplyFilter(new TicketFilter { Summary = "no matching summary" });
+            Assert.Equal(issue.Key, Assert.Single(controller.Bar.Tickets).Key);
+            Assert.True(controller.Bar.Tickets[0].IsStale);
+            Assert.Equal(issue.Key, controller.Tracker.ActiveKey);
+            controller.Tracker.Stop();
+            Assert.Empty(controller.Bar.Tickets);
+            Assert.Contains(controller.Bar.CalendarIssues, i => i.Key == issue.Key);
+            controller.Bar.ApplyFilter(new TicketFilter());
+            Assert.Single(controller.Bar.Tickets);
+            var filterWindow = new TicketFilterWindow(new TicketFilter(), ["Task", "Bug"]);
+            filterWindow.Show();
+            filterWindow.UpdateLayout();
+            filterWindow.Close();
             var menu = controller.BuildMenu();
             Assert.NotEmpty(menu.Items);
 

@@ -11,7 +11,8 @@ public sealed record JiraIssue(
     string Status,
     string ProjectTypeKey,
     string IssueType,
-    string? IssueTypeAvatarId = null)
+    string? IssueTypeAvatarId = null,
+    int? RemainingEstimateSeconds = null)
 {
     /// <summary>Jira Service Management projects support internal vs public comments.</summary>
     public bool IsServiceDesk => string.Equals(ProjectTypeKey, "service_desk", StringComparison.OrdinalIgnoreCase);

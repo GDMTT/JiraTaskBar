@@ -24,7 +24,7 @@ public interface IJiraClient
 /// <summary>Jira Cloud REST client using email + API token (Basic auth).</summary>
 public sealed class JiraClient : IJiraClient
 {
-    private const string SearchFields = "summary,priority,status,project,issuetype";
+    private const string SearchFields = "summary,priority,status,project,issuetype,timeestimate";
     private const int MaxIssues = 200;
     /// <summary>Retries after HTTP 429/503 before giving up (worklogs are then queued for later).</summary>
     public const int MaxThrottleRetries = 3;
