@@ -47,6 +47,47 @@ public class WindowSmokeTests
             var closeRovo = rovoButtons.Children.OfType<System.Windows.Controls.Button>().Single(b => Equals(b.Content, "Close"));
             closeRovo.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
             Assert.False(rovoWindow.IsVisible);
+            var indicator = new DueDateIndicator { Width = 16, Height = 16 };
+            System.Windows.Automation.AutomationProperties.SetName(indicator, "Due today");
+            Assert.Equal("Due today", System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(indicator).GetName());
+            var indicatorWindow = new Window { Content = indicator, SizeToContent = SizeToContent.WidthAndHeight };
+            indicatorWindow.Show();
+            indicatorWindow.UpdateLayout();
+            Assert.Same(indicator, indicator.InputHitTest(new Point(8, 8)));
+            foreach (var state in new[]
+            {
+                new DueDateState(DueDateKind.Upcoming, 1, "Full interval"),
+                new DueDateState(DueDateKind.Upcoming, 0.75, "Large remaining sector"),
+                new DueDateState(DueDateKind.Soon, 0.25, "Small remaining sector"),
+                new DueDateState(DueDateKind.Today, 0.1, "Due today"),
+                new DueDateState(DueDateKind.Overdue, 0, "Overdue"),
+                new DueDateState(DueDateKind.Upcoming, null, "Unknown baseline"),
+                new DueDateState(DueDateKind.None, null, "No due date"),
+            })
+            {
+                indicator.State = state;
+                indicatorWindow.UpdateLayout();
+                var rendered = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                rendered.Render(indicator);
+                Assert.Same(indicator, indicator.InputHitTest(new Point(8, 8)));
+            }
+            indicatorWindow.Close();
+            typeof(BarViewModel).GetField("_lastIssues", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(controller.Bar, new[] { issue });
+            controller.Tracker.Start(issue.Key);
+            controller.Bar.ApplyFilter(new TicketFilter { Summary = "no matching summary" });
+            Assert.Equal(issue.Key, Assert.Single(controller.Bar.Tickets).Key);
+            Assert.True(controller.Bar.Tickets[0].IsStale);
+            Assert.Equal(issue.Key, controller.Tracker.ActiveKey);
+            controller.Tracker.Stop();
+            Assert.Empty(controller.Bar.Tickets);
+            Assert.Contains(controller.Bar.CalendarIssues, i => i.Key == issue.Key);
+            controller.Bar.ApplyFilter(new TicketFilter());
+            Assert.Single(controller.Bar.Tickets);
+            var filterWindow = new TicketFilterWindow(new TicketFilter(), ["Task", "Bug"]);
+            filterWindow.Show();
+            filterWindow.UpdateLayout();
+            filterWindow.Close();
             var menu = controller.BuildMenu();
             Assert.NotEmpty(menu.Items);
 
