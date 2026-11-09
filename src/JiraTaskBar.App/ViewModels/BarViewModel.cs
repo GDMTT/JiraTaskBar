@@ -21,6 +21,23 @@ public sealed partial class BarViewModel : ObservableObject
     }
 
     public ObservableCollection<TicketViewModel> Tickets { get; } = [];
+    public TicketFilter Filter { get; private set; } = new();
+    public string FilterLabel => Filter.IsActive ? "Filters ●" : "Filter…";
+    public string FilterTooltip => Filter.IsActive
+        ? "Taskbar filters active. The running ticket remains visible. Click to edit or reset."
+        : "Filter by ticket type, remaining estimate, ticket number, and summary";
+    public IReadOnlyList<string> AvailableTypes => _lastIssues.Select(i => i.IssueType)
+        .Where(t => !string.IsNullOrWhiteSpace(t)).Concat(Filter.Types).Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList();
+
+    public void ApplyFilter(TicketFilter filter)
+    {
+        Filter = filter;
+        OnPropertyChanged(nameof(FilterLabel));
+        OnPropertyChanged(nameof(FilterTooltip));
+        OnPropertyChanged(nameof(EmptyText));
+        Rebuild();
+        Tick();
+    }
 
     public bool IsEmpty => Tickets.Count == 0;
 
@@ -49,7 +66,8 @@ public sealed partial class BarViewModel : ObservableObject
 
     public string PendingTooltip => $"{PendingWorklogs} worklog(s) not yet saved to Jira. Click for details.";
 
-    public string EmptyText => IsRefreshing ? "Loading…" : HasStatus ? "⚠ " + StatusMessage : "No tickets match your query";
+    public string EmptyText => IsRefreshing ? "Loading…" : HasStatus ? "⚠ " + StatusMessage :
+        Filter.IsActive ? "No tickets match your filters" : "No tickets match your query";
 
     [RelayCommand]
     public async Task RefreshAsync()
@@ -131,6 +149,7 @@ public sealed partial class BarViewModel : ObservableObject
             var vm = GetOrCreate(issue);
             vm.Issue = issue;
             vm.IsStale = false;
+            if (!Filter.Matches(issue)) continue;
             target.Add(vm);
             seen.Add(issue.Key);
         }

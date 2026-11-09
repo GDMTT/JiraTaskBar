@@ -107,7 +107,8 @@ public static class JiraPayloads
                 Status: fields?["status"]?["name"]?.GetValue<string>() ?? string.Empty,
                 ProjectTypeKey: fields?["project"]?["projectTypeKey"]?.GetValue<string>() ?? string.Empty,
                 IssueType: fields?["issuetype"]?["name"]?.GetValue<string>() ?? string.Empty,
-                IssueTypeAvatarId: AvatarId(fields?["issuetype"])));
+                IssueTypeAvatarId: AvatarId(fields?["issuetype"]),
+                RemainingEstimateSeconds: fields?["timeestimate"]?.GetValue<int>()));
         }
 
         var isLast = node?["isLast"]?.GetValue<bool>() ?? true;
