@@ -18,6 +18,7 @@ public class TicketCommandTests
 
         Assert.False(ticket.CommentCommand.CanExecute(null));
         Assert.False(ticket.CalendarCommand.CanExecute(null));
+        Assert.False(ticket.AskRovoCommand.CanExecute(null));
         Assert.False(invoked);
 
         connected = true;
@@ -25,7 +26,19 @@ public class TicketCommandTests
 
         Assert.True(ticket.CommentCommand.CanExecute(null));
         Assert.True(ticket.CalendarCommand.CanExecute(null));
+        Assert.True(ticket.AskRovoCommand.CanExecute(null));
         ticket.CommentCommand.Execute(null);
         Assert.True(invoked);
+    }
+
+    [Fact]
+    public void Rovo_command_keeps_selected_ticket_context_and_does_not_toggle_timer()
+    {
+        var toggled = false;
+        TicketViewModel? selected = null;
+        var ticket = new TicketViewModel(Issue, _ => toggled = true, _ => { }, _ => { }, askRovo: t => selected = t);
+        ticket.AskRovoCommand.Execute(null);
+        Assert.Same(ticket, selected);
+        Assert.False(toggled);
     }
 }

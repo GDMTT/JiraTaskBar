@@ -179,7 +179,8 @@ public sealed partial class BarViewModel : ObservableObject
             comment: t => _app.OpenCommentEditor(t),
             showTitles: () => _app.Settings.ShowTitlesOnBar,
             canComment: () => _app.Client is not null,
-            calendar: t => _app.OpenWorklogCalendar(t));
+            calendar: t => _app.OpenWorklogCalendar(t),
+            askRovo: t => _app.AskRovo(t));
         _byKey[issue.Key] = vm;
         return vm;
     }

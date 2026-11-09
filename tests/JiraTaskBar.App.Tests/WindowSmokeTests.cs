@@ -39,6 +39,10 @@ public class WindowSmokeTests
             bar.PlaceFloating(null, null, monitor);
             bar.UpdateLayout();
             Assert.True(bar.ActualHeight > 0);
+            var rovoWindow = new AskRovoWindow(issue, new JiraConnection(new Uri("https://example.atlassian.net/"), "", ""));
+            rovoWindow.Show();
+            rovoWindow.UpdateLayout();
+            rovoWindow.Close();
             var menu = controller.BuildMenu();
             Assert.NotEmpty(menu.Items);
 
