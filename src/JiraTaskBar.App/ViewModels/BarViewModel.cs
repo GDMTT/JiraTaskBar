@@ -122,6 +122,7 @@ public sealed partial class BarViewModel : ObservableObject
         {
             var active = string.Equals(t.Key, activeKey, StringComparison.OrdinalIgnoreCase);
             t.IsActive = active;
+            t.RefreshDueDate();
             t.ElapsedText = active ? FormatElapsed(_app.Tracker.Elapsed) : string.Empty;
         }
     }

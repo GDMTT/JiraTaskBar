@@ -44,7 +44,7 @@ public sealed partial class TicketViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Summary), nameof(PriorityLabel), nameof(PriorityBrush), nameof(MetaLine), nameof(SubtitleText), nameof(HasSubtitle))]
-    [NotifyPropertyChangedFor(nameof(TypeGlyph), nameof(TypeGlyphBrush))]
+    [NotifyPropertyChangedFor(nameof(TypeGlyph), nameof(TypeGlyphBrush), nameof(DueState))]
     private JiraIssue _issue;
 
     /// <summary>The issue type's icon from Jira, once loaded; null shows <see cref="TypeGlyph"/> instead.</summary>
@@ -72,6 +72,8 @@ public sealed partial class TicketViewModel : ObservableObject
     private string _elapsedText = string.Empty;
 
     public string Summary => Issue.Summary;
+    public DueDateState DueState => DueDateProgress.Calculate(Issue, DateTimeOffset.UtcNow, TimeZoneInfo.Local);
+    public void RefreshDueDate() => OnPropertyChanged(nameof(DueState));
 
     public string PriorityLabel => Issue.Priority?.Name ?? "No priority";
 
