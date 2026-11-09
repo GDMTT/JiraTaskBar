@@ -42,7 +42,11 @@ public class WindowSmokeTests
             var rovoWindow = new AskRovoWindow(issue, new JiraConnection(new Uri("https://example.atlassian.net/"), "", ""));
             rovoWindow.Show();
             rovoWindow.UpdateLayout();
-            rovoWindow.Close();
+            var rovoPanel = (System.Windows.Controls.StackPanel)((System.Windows.Controls.ScrollViewer)rovoWindow.Content).Content;
+            var rovoButtons = rovoPanel.Children.OfType<System.Windows.Controls.StackPanel>().Single();
+            var closeRovo = rovoButtons.Children.OfType<System.Windows.Controls.Button>().Single(b => Equals(b.Content, "Close"));
+            closeRovo.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Assert.False(rovoWindow.IsVisible);
             var menu = controller.BuildMenu();
             Assert.NotEmpty(menu.Items);
 

@@ -55,6 +55,13 @@ public sealed class AskRovoWindow : Window
             ? "In Jira, select Ask Rovo and paste your question. Sign in there if required."
             : "Could not open the browser. Copy the ticket URL above and open it manually.");
         var close = new Button { Content = "Close", IsCancel = true, Padding = new Thickness(8, 4, 8, 4) }; buttons.Children.Add(close);
+        close.Click += (_, _) => Close();
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != System.Windows.Input.Key.Escape) return;
+            e.Handled = true;
+            Close();
+        };
         panel.Children.Add(new TextBlock
         {
             Text = "Requires Jira Cloud and Rovo access in your browser account. If Ask Rovo is missing or access is denied, contact your site admin about availability, plan, permissions, and Rovo credits. Network and sign-in errors appear in Jira. No API token is copied or sent to another AI service. Your timer keeps running.",
