@@ -291,6 +291,13 @@ public sealed class AppController : IDisposable
         window.ShowNextTo(_bar is null ? IntPtr.Zero : new WindowInteropHelper(_bar).Handle);
     }
 
+    public void AskRovo(TicketViewModel ticket)
+    {
+        if (Client is not { } client) return;
+        var dialog = new AskRovoWindow(ticket.Issue, client.Connection);
+        dialog.Show();
+    }
+
     public void OpenWorklogCalendar(TicketViewModel ticket)
     {
         if (Client is null) return;

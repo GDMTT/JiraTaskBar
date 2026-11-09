@@ -39,6 +39,14 @@ public class WindowSmokeTests
             bar.PlaceFloating(null, null, monitor);
             bar.UpdateLayout();
             Assert.True(bar.ActualHeight > 0);
+            var rovoWindow = new AskRovoWindow(issue, new JiraConnection(new Uri("https://example.atlassian.net/"), "", ""));
+            rovoWindow.Show();
+            rovoWindow.UpdateLayout();
+            var rovoPanel = (System.Windows.Controls.StackPanel)((System.Windows.Controls.ScrollViewer)rovoWindow.Content).Content;
+            var rovoButtons = rovoPanel.Children.OfType<System.Windows.Controls.StackPanel>().Single();
+            var closeRovo = rovoButtons.Children.OfType<System.Windows.Controls.Button>().Single(b => Equals(b.Content, "Close"));
+            closeRovo.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            Assert.False(rovoWindow.IsVisible);
             var indicator = new DueDateIndicator { Width = 16, Height = 16 };
             System.Windows.Automation.AutomationProperties.SetName(indicator, "Due today");
             Assert.Equal("Due today", System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(indicator).GetName());
