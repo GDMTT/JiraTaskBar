@@ -46,6 +46,23 @@ public class WindowSmokeTests
             indicatorWindow.Show();
             indicatorWindow.UpdateLayout();
             Assert.Same(indicator, indicator.InputHitTest(new Point(8, 8)));
+            foreach (var state in new[]
+            {
+                new DueDateState(DueDateKind.Upcoming, 1, "Full interval"),
+                new DueDateState(DueDateKind.Upcoming, 0.75, "Large remaining sector"),
+                new DueDateState(DueDateKind.Soon, 0.25, "Small remaining sector"),
+                new DueDateState(DueDateKind.Today, 0.1, "Due today"),
+                new DueDateState(DueDateKind.Overdue, 0, "Overdue"),
+                new DueDateState(DueDateKind.Upcoming, null, "Unknown baseline"),
+                new DueDateState(DueDateKind.None, null, "No due date"),
+            })
+            {
+                indicator.State = state;
+                indicatorWindow.UpdateLayout();
+                var rendered = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                rendered.Render(indicator);
+                Assert.Same(indicator, indicator.InputHitTest(new Point(8, 8)));
+            }
             indicatorWindow.Close();
             typeof(BarViewModel).GetField("_lastIssues", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .SetValue(controller.Bar, new[] { issue });
