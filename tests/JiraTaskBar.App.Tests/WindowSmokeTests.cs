@@ -116,6 +116,14 @@ public class WindowSmokeTests
             var contextReport = new ContextReportWindow(controller.ContextHistory);
             contextReport.Show();
             contextReport.UpdateLayout();
+            var fromDate = Assert.IsType<System.Windows.Controls.DatePicker>(contextReport.FindName("FromDate"));
+            var toDate = Assert.IsType<System.Windows.Controls.DatePicker>(contextReport.FindName("ToDate"));
+            Assert.Equal("en-GB", fromDate.Language.IetfLanguageTag, ignoreCase: true);
+            Assert.Equal("en-GB", toDate.Language.IetfLanguageTag, ignoreCase: true);
+            Assert.Equal("dd/MM/yyyy", System.Globalization.CultureInfo.GetCultureInfo(fromDate.Language.IetfLanguageTag)
+                .DateTimeFormat.ShortDatePattern);
+            Assert.Equal(System.Windows.Controls.DatePickerFormat.Short, fromDate.SelectedDateFormat);
+            Assert.Equal(System.Windows.Controls.DatePickerFormat.Short, toDate.SelectedDateFormat);
             contextReport.Close();
 
             var worklogCalendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => []);
