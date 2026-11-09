@@ -66,6 +66,17 @@ public static partial class JiraDuration
         if (parts.Count == 0) parts.Add("0m");
         return string.Join(" ", parts);
     }
+
+    public static bool TryParsePreservingOriginal(string text, string displayed, long? original,
+        JiraDurationSettings settings, out long? seconds)
+    {
+        if (string.Equals(text.Trim(), displayed, StringComparison.OrdinalIgnoreCase))
+        {
+            seconds = original;
+            return true;
+        }
+        return TryParse(text, settings, out seconds);
+    }
 }
 
 public sealed record TicketFilter
@@ -93,7 +104,7 @@ public sealed record TicketFilter
             return (DueDate == DueDateFilter.Any || DueDate == DueDateFilter.NoDueDate) &&
                    !MinimumDueSeconds.HasValue && !MaximumDueSeconds.HasValue;
 
-        var remaining = (long)Math.Floor((DueDateProgress.Deadline(due, zone) - now).TotalSeconds);
+        var remaining = (DueDateProgress.Deadline(due, zone) - now).TotalSeconds;
         if (DueDate == DueDateFilter.NoDueDate) return false;
         if (DueDate == DueDateFilter.Overdue && remaining > 0) return false;
         if (MinimumDueSeconds.HasValue && remaining < MinimumDueSeconds) return false;

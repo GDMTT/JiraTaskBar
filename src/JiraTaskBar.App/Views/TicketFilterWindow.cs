@@ -91,9 +91,11 @@ public sealed class TicketFilterWindow : Window
         };
         AddField(dueDate);
         Label("Minimum time until due date (inclusive; e.g. 1d 2h; blank means no minimum)");
-        var min = new TextBox { Text = JiraDuration.Format(initial.MinimumDueSeconds, durations) }; AddField(min);
+        var initialMinText = JiraDuration.Format(initial.MinimumDueSeconds, durations);
+        var min = new TextBox { Text = initialMinText }; AddField(min);
         Label("Maximum time until due date (inclusive; e.g. 30m; blank means no maximum)");
-        var max = new TextBox { Text = JiraDuration.Format(initial.MaximumDueSeconds, durations) }; AddField(max);
+        var initialMaxText = JiraDuration.Format(initial.MaximumDueSeconds, durations);
+        var max = new TextBox { Text = initialMaxText }; AddField(max);
         panel.Children.Add(new TextBlock
         {
             Text = $"Jira duration units use {durations.HoursPerDay:g} hours per day and {durations.DaysPerWeek:g} days per week. Due dates end at local midnight after the selected date.",
@@ -110,8 +112,8 @@ public sealed class TicketFilterWindow : Window
         var cancel = new Button { Content = "Cancel", IsCancel = true, Padding = new Thickness(10, 4, 10, 4) }; actions.Children.Add(cancel);
         apply.Click += (_, _) =>
         {
-            if (!JiraDuration.TryParse(min.Text, durations, out var lower) ||
-                !JiraDuration.TryParse(max.Text, durations, out var upper) || lower > upper ||
+            if (!JiraDuration.TryParsePreservingOriginal(min.Text, initialMinText, initial.MinimumDueSeconds, durations, out var lower) ||
+                !JiraDuration.TryParsePreservingOriginal(max.Text, initialMaxText, initial.MaximumDueSeconds, durations, out var upper) || lower > upper ||
                 ((dueDate.SelectedIndex == (int)DueDateFilter.NoDueDate ||
                   dueDate.SelectedIndex == (int)DueDateFilter.Overdue) && (lower.HasValue || upper.HasValue)))
             {

@@ -40,6 +40,18 @@ public class TicketFilterTests
     }
 
     [Fact]
+    public void Unchanged_lossy_display_preserves_exact_bound()
+    {
+        var displayed = JiraDuration.Format(90, Durations);
+        Assert.Equal("1m", displayed);
+
+        Assert.True(JiraDuration.TryParsePreservingOriginal(displayed, displayed, 90, Durations, out var unchanged));
+        Assert.Equal(90, unchanged);
+        Assert.True(JiraDuration.TryParsePreservingOriginal("2m", displayed, 90, Durations, out var edited));
+        Assert.Equal(120, edited);
+    }
+
+    [Fact]
     public void Combines_types_key_words_and_due_bounds_case_insensitively()
     {
         var filter = new TicketFilter
@@ -76,6 +88,20 @@ public class TicketFilterTests
         Assert.True(filter.Matches(issue, Now, TimeZoneInfo.Utc));
         Assert.False(filter.Matches(issue, Now.AddSeconds(1), TimeZoneInfo.Utc));
         Assert.True(filter.UsesCurrentTime);
+    }
+
+    [Fact]
+    public void Deadline_bounds_compare_fractional_seconds_without_rounding()
+    {
+        var issue = Issue(new DateOnly(2026, 11, 9));
+        var deadline = new DateTimeOffset(2026, 11, 10, 0, 0, 0, TimeSpan.Zero);
+        var maximum = new TicketFilter { MaximumDueSeconds = 60 };
+        var minimum = new TicketFilter { MinimumDueSeconds = 60 };
+
+        Assert.False(maximum.Matches(issue, deadline.AddSeconds(-60.5), TimeZoneInfo.Utc));
+        Assert.False(minimum.Matches(issue, deadline.AddSeconds(-59.5), TimeZoneInfo.Utc));
+        Assert.True(maximum.Matches(issue, deadline.AddSeconds(-60), TimeZoneInfo.Utc));
+        Assert.True(minimum.Matches(issue, deadline.AddSeconds(-60), TimeZoneInfo.Utc));
     }
 
     [Fact]
