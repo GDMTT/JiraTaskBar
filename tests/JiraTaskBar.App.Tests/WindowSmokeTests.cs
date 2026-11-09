@@ -39,6 +39,14 @@ public class WindowSmokeTests
             bar.PlaceFloating(null, null, monitor);
             bar.UpdateLayout();
             Assert.True(bar.ActualHeight > 0);
+            var indicator = new DueDateIndicator { Width = 16, Height = 16 };
+            System.Windows.Automation.AutomationProperties.SetName(indicator, "Due today");
+            Assert.Equal("Due today", System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(indicator).GetName());
+            var indicatorWindow = new Window { Content = indicator, SizeToContent = SizeToContent.WidthAndHeight };
+            indicatorWindow.Show();
+            indicatorWindow.UpdateLayout();
+            Assert.Same(indicator, indicator.InputHitTest(new Point(8, 8)));
+            indicatorWindow.Close();
             var menu = controller.BuildMenu();
             Assert.NotEmpty(menu.Items);
 

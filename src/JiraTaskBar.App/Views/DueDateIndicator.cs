@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Windows;
+using System.Windows.Automation.Peers;
 using System.Windows.Media;
 using JiraTaskBar.Core.Jira;
 
@@ -11,8 +12,11 @@ public sealed class DueDateIndicator : FrameworkElement
         typeof(DueDateState), typeof(DueDateIndicator), new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
     public DueDateState? State { get => (DueDateState?)GetValue(StateProperty); set => SetValue(StateProperty, value); }
 
+    protected override AutomationPeer OnCreateAutomationPeer() => new FrameworkElementAutomationPeer(this);
+
     protected override void OnRender(DrawingContext dc)
     {
+        dc.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, ActualWidth, ActualHeight));
         var state = State;
         var center = new Point(ActualWidth / 2, ActualHeight / 2);
         var radius = Math.Max(0, Math.Min(ActualWidth, ActualHeight) / 2 - 1);

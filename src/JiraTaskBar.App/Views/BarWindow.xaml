@@ -84,7 +84,7 @@
                         <Border Width="4" Margin="0,1,7,1" CornerRadius="2" Background="{Binding PriorityBrush}" />
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <DockPanel>
-                                <views:DueDateIndicator DockPanel.Dock="Right" Width="16" Height="16" Margin="3,0,0,0"
+                                <views:DueDateIndicator DockPanel.Dock="Left" Width="16" Height="16" Margin="0,0,5,0"
                                                         State="{Binding DueState}" ToolTip="{Binding DueState.Tooltip}"
                                                         AutomationProperties.Name="{Binding DueState.Tooltip}" />
                                 <ContentPresenter DockPanel.Dock="Left" Content="{Binding}" ContentTemplate="{StaticResource TypeIconTemplate}"
