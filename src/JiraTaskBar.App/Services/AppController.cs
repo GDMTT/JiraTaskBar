@@ -204,7 +204,7 @@ public sealed class AppController : IDisposable
                 var site = JiraConnection.NormalizeSiteUrl(Settings.SiteUrl ?? string.Empty);
                 credentials = new StoredCredentials(site.ToString(), Settings.Email.Trim(), legacyToken);
                 _secrets.Save(credentials);
-                Log.Info("Migrated credentials to the combined encrypted store");
+                Log.Info("Migrated credentials to Windows Credential Manager");
             }
             catch (ArgumentException ex)
             {

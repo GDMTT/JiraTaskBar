@@ -1,6 +1,5 @@
 using System.Net;
 using System.Runtime.Versioning;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using JiraTaskBar.Core.Jira;
@@ -14,11 +13,12 @@ namespace JiraTaskBar.Core.Tests;
 public class SecretStoreTests : IDisposable
 {
     private readonly TempDir _dir = new();
+    private readonly FakeCredentialBackend _backend = new();
     private static readonly StoredCredentials Creds = new("https://acme.atlassian.net/", "me@acme.com", "secret-token");
 
     public void Dispose() => _dir.Dispose();
 
-    private SecretStore Store => new(_dir.File("credentials.bin"), _dir.File("token.bin"));
+    private SecretStore Store => new(_dir.File("credentials.bin"), _dir.File("token.bin"), _backend);
 
     [Fact]
     public void Site_email_and_token_round_trip_together()
@@ -26,20 +26,15 @@ public class SecretStoreTests : IDisposable
         Store.Save(Creds);
 
         Assert.Equal(Creds, Store.Load());
-        // Nothing readable on disk: the site and token are inside the DPAPI blob.
-        var raw = File.ReadAllBytes(_dir.File("credentials.bin"));
-        Assert.DoesNotContain("acme", Encoding.UTF8.GetString(raw));
-        Assert.DoesNotContain("secret-token", Encoding.UTF8.GetString(raw));
+        Assert.False(File.Exists(_dir.File("credentials.bin")));
+        Assert.NotNull(_backend.Data);
     }
 
     [Fact]
     public void Tampered_blob_is_rejected()
     {
         Store.Save(Creds);
-        var path = _dir.File("credentials.bin");
-        var bytes = File.ReadAllBytes(path);
-        bytes[^1] ^= 0xFF;
-        File.WriteAllBytes(path, bytes);
+        _backend.Data![^1] ^= 0xFF;
 
         Assert.Null(Store.Load());
     }
@@ -47,17 +42,71 @@ public class SecretStoreTests : IDisposable
     [Fact]
     public void Legacy_token_is_readable_until_new_credentials_are_saved()
     {
-        var legacy = ProtectedData.Protect(Encoding.UTF8.GetBytes("old-token"),
-            Encoding.UTF8.GetBytes("JiraTaskBar.ApiToken.v1"), DataProtectionScope.CurrentUser);
-        File.WriteAllBytes(_dir.File("token.bin"), legacy);
+        var legacyPath = _dir.File("token.bin");
+        File.WriteAllText(legacyPath, "legacy placeholder");
+        var store = new SecretStore(_dir.File("credentials.bin"), legacyPath, _backend,
+            (path, _) => path == legacyPath ? Encoding.UTF8.GetBytes("old-token") : null);
 
-        Assert.Null(Store.Load());
-        Assert.Equal("old-token", Store.LoadLegacyToken());
+        Assert.Null(store.Load());
+        Assert.Equal("old-token", store.LoadLegacyToken());
 
-        Store.Save(Creds with { ApiToken = "old-token" });
+        store.Save(Creds with { ApiToken = "old-token" });
 
         Assert.False(File.Exists(_dir.File("token.bin")));
-        Assert.Equal("old-token", Store.Load()!.ApiToken);
+        Assert.Equal("old-token", store.Load()!.ApiToken);
+    }
+
+    [Fact]
+    public void Dpapi_credentials_migrate_only_after_verified_write()
+    {
+        var path = _dir.File("credentials.bin");
+        File.WriteAllText(path, "legacy placeholder");
+        var plain = JsonSerializer.SerializeToUtf8Bytes(Creds);
+        var store = new SecretStore(path, backend: _backend,
+            legacyReader: (candidate, _) => candidate == path ? plain.ToArray() : null);
+
+        Assert.Equal(Creds, store.Load());
+        Assert.False(File.Exists(path));
+        Assert.Equal(Creds, store.Load());
+    }
+
+    [Fact]
+    public void Failed_migration_preserves_dpapi_file_and_credential()
+    {
+        var path = _dir.File("credentials.bin");
+        File.WriteAllText(path, "legacy placeholder");
+        _backend.FailWrites = true;
+        var plain = JsonSerializer.SerializeToUtf8Bytes(Creds);
+        var store = new SecretStore(path, backend: _backend,
+            legacyReader: (candidate, _) => candidate == path ? plain.ToArray() : null);
+
+        Assert.Equal(Creds, store.Load());
+        Assert.True(File.Exists(path));
+    }
+
+    [Fact]
+    public void Inaccessible_or_corrupt_vault_returns_no_credentials()
+    {
+        _backend.FailReads = true;
+        Assert.Null(Store.Load());
+
+        _backend.FailReads = false;
+        _backend.Data = Encoding.UTF8.GetBytes("not json");
+        Assert.Null(Store.Load());
+    }
+
+    [Fact]
+    public void Clear_removes_vault_and_legacy_files()
+    {
+        Store.Save(Creds);
+        File.WriteAllText(_dir.File("credentials.bin"), "old");
+        File.WriteAllText(_dir.File("token.bin"), "older");
+
+        Store.Clear();
+
+        Assert.Null(_backend.Data);
+        Assert.False(File.Exists(_dir.File("credentials.bin")));
+        Assert.False(File.Exists(_dir.File("token.bin")));
     }
 
     [Fact]

@@ -13,8 +13,9 @@ namespace JiraTaskBar.Core.Storage;
 public sealed record StoredCredentials(string SiteUrl, string Email, string ApiToken, string? CloudId = null);
 
 /// <summary>
-/// Stores <see cref="StoredCredentials"/> encrypted with DPAPI for the current Windows user.
-/// Because the site is inside the encrypted blob, editing settings.json can't redirect the token.
+/// Stores <see cref="StoredCredentials"/> in Windows Credential Manager for the current user.
+/// Because the site is inside the credential, editing settings.json can't redirect the token.
+/// Existing DPAPI files are migrated only after the Credential Manager write is verified.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class SecretStore
@@ -24,45 +25,71 @@ public sealed class SecretStore
 
     private readonly string _path;
     private readonly string? _legacyTokenPath;
+    private readonly ICredentialBackend _backend;
+    private readonly Func<string, byte[], byte[]?> _unprotect;
 
-    /// <param name="path">The encrypted credentials file.</param>
+    /// <param name="path">The previous version's encrypted credentials file, used only for migration.</param>
     /// <param name="legacyTokenPath">The v1 file that held only the token, if it may still exist.</param>
-    public SecretStore(string path, string? legacyTokenPath = null)
+    public SecretStore(string path, string? legacyTokenPath = null, ICredentialBackend? backend = null,
+        Func<string, byte[], byte[]?>? legacyReader = null)
     {
         _path = path;
         _legacyTokenPath = legacyTokenPath;
+        _backend = backend ?? new WindowsCredentialBackend();
+        _unprotect = legacyReader ?? Unprotect;
     }
 
     public StoredCredentials? Load()
     {
-        var plain = Unprotect(_path, Entropy);
+        byte[]? stored;
+        try
+        {
+            stored = _backend.Read();
+        }
+        catch (CredentialBackendException)
+        {
+            // An inaccessible vault must not silently fall back to a possibly stale credential.
+            return null;
+        }
+
+        if (stored is not null)
+        {
+            try { return Deserialize(stored); }
+            finally { CryptographicOperations.ZeroMemory(stored); }
+        }
+
+        var plain = _unprotect(_path, Entropy);
         if (plain is null) return null;
         try
         {
-            var credentials = JsonSerializer.Deserialize<StoredCredentials>(plain);
-            return credentials is { SiteUrl.Length: > 0, Email.Length: > 0, ApiToken.Length: > 0 } ? credentials : null;
+            var credentials = Deserialize(plain);
+            if (credentials is null) return null;
+
+            // Keep using the valid legacy credential if migration is temporarily unavailable,
+            // and keep the file so the next startup can retry.
+            try
+            {
+                WriteAndVerify(plain);
+                File.Delete(_path);
+            }
+            catch (CredentialBackendException) { }
+            return credentials;
         }
-        catch (JsonException)
-        {
-            return null;
-        }
+        finally { CryptographicOperations.ZeroMemory(plain); }
     }
 
     public void Save(StoredCredentials credentials)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
         var plain = JsonSerializer.SerializeToUtf8Bytes(credentials);
         try
         {
-            var cipher = ProtectedData.Protect(plain, Entropy, DataProtectionScope.CurrentUser);
-            var temp = _path + ".tmp";
-            File.WriteAllBytes(temp, cipher);
-            File.Move(temp, _path, overwrite: true);
+            WriteAndVerify(plain);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(plain);
         }
+        if (File.Exists(_path)) File.Delete(_path);
         DeleteLegacy();
     }
 
@@ -70,7 +97,7 @@ public sealed class SecretStore
     public string? LoadLegacyToken()
     {
         if (_legacyTokenPath is null) return null;
-        var plain = Unprotect(_legacyTokenPath, LegacyEntropy);
+        var plain = _unprotect(_legacyTokenPath, LegacyEntropy);
         return plain is null ? null : Encoding.UTF8.GetString(plain);
     }
 
@@ -81,8 +108,33 @@ public sealed class SecretStore
 
     public void Clear()
     {
+        _backend.Delete();
         if (File.Exists(_path)) File.Delete(_path);
         DeleteLegacy();
+    }
+
+    private void WriteAndVerify(byte[] plain)
+    {
+        _backend.Write(plain);
+        var verified = _backend.Read();
+        if (verified is null)
+            throw new CredentialBackendException("Credential Manager did not return the saved credential.");
+        try
+        {
+            if (!CryptographicOperations.FixedTimeEquals(plain, verified))
+                throw new CredentialBackendException("Credential Manager returned different credential data.");
+        }
+        finally { CryptographicOperations.ZeroMemory(verified); }
+    }
+
+    private static StoredCredentials? Deserialize(byte[] plain)
+    {
+        try
+        {
+            var credentials = JsonSerializer.Deserialize<StoredCredentials>(plain);
+            return credentials is { SiteUrl.Length: > 0, Email.Length: > 0, ApiToken.Length: > 0 } ? credentials : null;
+        }
+        catch (JsonException) { return null; }
     }
 
     private static byte[]? Unprotect(string path, byte[] entropy)

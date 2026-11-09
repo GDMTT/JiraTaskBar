@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using JiraTaskBar.Core.Jira;
+using JiraTaskBar.Core.Storage;
 
 namespace JiraTaskBar.Core.Tests;
 
@@ -59,6 +60,32 @@ public sealed class TempDir : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(Path, recursive: true); } catch (IOException) { }
+    }
+}
+
+public sealed class FakeCredentialBackend : ICredentialBackend
+{
+    public byte[]? Data { get; set; }
+    public bool FailReads { get; set; }
+    public bool FailWrites { get; set; }
+    public bool FailDeletes { get; set; }
+
+    public byte[]? Read()
+    {
+        if (FailReads) throw new CredentialBackendException("read failed");
+        return Data?.ToArray();
+    }
+
+    public void Write(byte[] credential)
+    {
+        if (FailWrites) throw new CredentialBackendException("write failed");
+        Data = credential.ToArray();
+    }
+
+    public void Delete()
+    {
+        if (FailDeletes) throw new CredentialBackendException("delete failed");
+        Data = null;
     }
 }
 
