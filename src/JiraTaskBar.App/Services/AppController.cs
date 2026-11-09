@@ -302,7 +302,7 @@ public sealed class AppController : IDisposable
         }
 
         _worklogWindow = new WorklogCalendarWindow(ticket.Issue, Client, () => Worklogs.Pending,
-            () => Bar.Tickets.Select(t => t.Issue).ToList(), Settings.CalendarResolutionMinutes);
+            () => Bar.CalendarIssues, Settings.CalendarResolutionMinutes);
         _worklogWindow.Closed += (_, _) => _worklogWindow = null;
         _worklogWindow.Show();
     }

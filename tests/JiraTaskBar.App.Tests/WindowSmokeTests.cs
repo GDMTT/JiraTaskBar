@@ -48,6 +48,7 @@ public class WindowSmokeTests
             Assert.Equal(issue.Key, controller.Tracker.ActiveKey);
             controller.Tracker.Stop();
             Assert.Empty(controller.Bar.Tickets);
+            Assert.Contains(controller.Bar.CalendarIssues, i => i.Key == issue.Key);
             controller.Bar.ApplyFilter(new TicketFilter());
             Assert.Single(controller.Bar.Tickets);
             var filterWindow = new TicketFilterWindow(new TicketFilter(), ["Task", "Bug"]);

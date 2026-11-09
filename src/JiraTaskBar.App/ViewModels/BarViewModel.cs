@@ -22,6 +22,8 @@ public sealed partial class BarViewModel : ObservableObject
 
     public ObservableCollection<TicketViewModel> Tickets { get; } = [];
     public TicketFilter Filter { get; private set; } = new();
+    public IReadOnlyList<JiraIssue> CalendarIssues => _lastIssues.Concat(Tickets.Select(t => t.Issue))
+        .DistinctBy(i => i.Key, StringComparer.OrdinalIgnoreCase).ToList();
     public string FilterLabel => Filter.IsActive ? "Filters ●" : "Filter…";
     public string FilterTooltip => Filter.IsActive
         ? "Taskbar filters active. The running ticket remains visible. Click to edit or reset."

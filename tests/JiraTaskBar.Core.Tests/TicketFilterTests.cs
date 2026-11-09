@@ -5,6 +5,14 @@ namespace JiraTaskBar.Core.Tests;
 public class TicketFilterTests
 {
     [Fact]
+    public void Fractional_bounds_round_inward_to_whole_seconds()
+    {
+        Assert.True(TicketFilter.TryMinuteBound(0.001m.ToString(), true, out var min));
+        Assert.Equal(1, min);
+        Assert.True(TicketFilter.TryMinuteBound(0.999m.ToString(), false, out var max));
+        Assert.Equal(59, max);
+    }
+    [Fact]
     public void Jira_search_preserves_unknown_and_zero_remaining_estimates()
     {
         var data = System.Text.Json.Nodes.JsonNode.Parse("""

@@ -4,6 +4,15 @@ public enum EstimateFilter { Any, HasEstimate, NoEstimate }
 
 public sealed record TicketFilter
 {
+    public static bool TryMinuteBound(string text, bool minimum, out int? seconds)
+    {
+        seconds = null;
+        if (string.IsNullOrWhiteSpace(text)) return true;
+        if (!decimal.TryParse(text, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.CurrentCulture, out var minutes) || minutes < 0 || minutes > int.MaxValue / 60m) return false;
+        seconds = (int)(minimum ? decimal.Ceiling(minutes * 60) : decimal.Floor(minutes * 60));
+        return true;
+    }
     public IReadOnlyList<string> Types { get; init; } = [];
     public string Key { get; init; } = string.Empty;
     public string Summary { get; init; } = string.Empty;

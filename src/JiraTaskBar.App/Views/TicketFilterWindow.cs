@@ -14,27 +14,40 @@ public sealed class TicketFilterWindow : Window
         Filter = initial;
         Title = "Filter taskbar tickets";
         Width = 460;
+        MaxHeight = SystemParameters.WorkArea.Height;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var panel = new StackPanel { Margin = new Thickness(20) };
-        Content = panel;
-        void Label(string text) => panel.Children.Add(new TextBlock { Text = text, Margin = new Thickness(0, 8, 0, 4) });
+        Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        TextBlock? lastLabel = null;
+        void Label(string text)
+        {
+            lastLabel = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 4) };
+            panel.Children.Add(lastLabel);
+        }
+        void AddField(Control field)
+        {
+            System.Windows.Automation.AutomationProperties.SetLabeledBy(field, lastLabel);
+            panel.Children.Add(field);
+        }
         Label("Ticket types (Ctrl-click to select multiple; no selection means all)");
         var typeList = new ListBox { ItemsSource = types, SelectionMode = SelectionMode.Multiple, Height = 90 };
         foreach (var type in initial.Types) typeList.SelectedItems.Add(type);
-        panel.Children.Add(typeList);
+        AddField(typeList);
         Label("Ticket number / key contains");
-        var key = new TextBox { Text = initial.Key }; panel.Children.Add(key);
+        var key = new TextBox { Text = initial.Key }; AddField(key);
         Label("Summary contains all these words");
-        var summary = new TextBox { Text = initial.Summary }; panel.Children.Add(summary);
+        var summary = new TextBox { Text = initial.Summary }; AddField(summary);
         Label("Remaining work estimate");
         var estimate = new ComboBox { ItemsSource = new[] { "Any (including missing)", "Has estimate (including zero)", "No estimate" }, SelectedIndex = (int)initial.Estimate };
-        panel.Children.Add(estimate);
+        AddField(estimate);
         Label("Minimum remaining minutes (inclusive; blank means no minimum)");
-        var min = new TextBox { Text = initial.MinimumSeconds.HasValue ? (initial.MinimumSeconds.Value / 60m).ToString(CultureInfo.CurrentCulture) : "" }; panel.Children.Add(min);
+        var min = new TextBox { Text = initial.MinimumSeconds.HasValue ? (initial.MinimumSeconds.Value / 60m).ToString(CultureInfo.CurrentCulture) : "" }; AddField(min);
         Label("Maximum remaining minutes (inclusive; blank means no maximum)");
-        var max = new TextBox { Text = initial.MaximumSeconds.HasValue ? (initial.MaximumSeconds.Value / 60m).ToString(CultureInfo.CurrentCulture) : "" }; panel.Children.Add(max);
+        var max = new TextBox { Text = initial.MaximumSeconds.HasValue ? (initial.MaximumSeconds.Value / 60m).ToString(CultureInfo.CurrentCulture) : "" }; AddField(max);
+        var initialMin = min.Text;
+        var initialMax = max.Text;
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) }; panel.Children.Add(error);
         Label("Filters affect the bar only. Your running ticket stays visible.");
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) }; panel.Children.Add(actions);
@@ -44,15 +57,13 @@ public sealed class TicketFilterWindow : Window
         var cancel = new Button { Content = "Cancel", IsCancel = true, Padding = new Thickness(10, 4, 10, 4) }; actions.Children.Add(cancel);
         apply.Click += (_, _) =>
         {
-            bool Parse(string text, out int? seconds)
+            bool Parse(string text, string originalText, int? originalSeconds, bool minimum, out int? seconds)
             {
-                seconds = null;
-                if (string.IsNullOrWhiteSpace(text)) return true;
-                if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.CurrentCulture, out var value) || value < 0 || value > int.MaxValue / 60m) return false;
-                seconds = (int)decimal.Round(value * 60);
-                return true;
+                if (text == originalText) { seconds = originalSeconds; return true; }
+                return TicketFilter.TryMinuteBound(text, minimum, out seconds);
             }
-            if (!Parse(min.Text, out var lower) || !Parse(max.Text, out var upper) || lower > upper ||
+            if (!Parse(min.Text, initialMin, initial.MinimumSeconds, true, out var lower) ||
+                !Parse(max.Text, initialMax, initial.MaximumSeconds, false, out var upper) || lower > upper ||
                 (estimate.SelectedIndex == 2 && (lower.HasValue || upper.HasValue)))
             { error.Text = "Enter non-negative minute bounds with minimum ≤ maximum. Clear the bounds when selecting No estimate."; return; }
             Filter = new TicketFilter { Types = typeList.SelectedItems.Cast<string>().ToArray(), Key = key.Text,
