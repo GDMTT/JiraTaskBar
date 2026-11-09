@@ -107,7 +107,11 @@ public static class JiraPayloads
                 Status: fields?["status"]?["name"]?.GetValue<string>() ?? string.Empty,
                 ProjectTypeKey: fields?["project"]?["projectTypeKey"]?.GetValue<string>() ?? string.Empty,
                 IssueType: fields?["issuetype"]?["name"]?.GetValue<string>() ?? string.Empty,
-                IssueTypeAvatarId: AvatarId(fields?["issuetype"])));
+                IssueTypeAvatarId: AvatarId(fields?["issuetype"]),
+                CreatedAt: DateTimeOffset.TryParse(fields?["created"]?.GetValue<string>(), CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var created) ? created : null,
+                DueDate: DateOnly.TryParseExact(fields?["duedate"]?.GetValue<string>(), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var due) ? due : null));
         }
 
         var isLast = node?["isLast"]?.GetValue<bool>() ?? true;
