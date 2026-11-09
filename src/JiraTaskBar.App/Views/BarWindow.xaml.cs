@@ -56,7 +56,7 @@ public partial class BarWindow : Window
 
     private void Filter_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new TicketFilterWindow(_vm.Filter, _vm.AvailableTypes) { Owner = this };
+        var dialog = new TicketFilterWindow(_vm.Filter, _vm.AvailableTypes, _app.DurationSettings) { Owner = this };
         if (dialog.ShowDialog() == true) _vm.ApplyFilter(dialog.Filter);
     }
 

@@ -7,11 +7,14 @@ public sealed record DueDateState(DueDateKind Kind, double? RemainingFraction, s
 
 public static class DueDateProgress
 {
+    public static DateTimeOffset Deadline(DateOnly dueDate, TimeZoneInfo zone) =>
+        WorklogCalendarLayout.LocalDateTime(dueDate.AddDays(1), TimeOnly.MinValue, zone);
+
     public static DueDateState Calculate(JiraIssue issue, DateTimeOffset now, TimeZoneInfo zone)
     {
         if (issue.DueDate is not { } due || due == DateOnly.MaxValue)
             return new(DueDateKind.None, null, "No due date");
-        var deadline = WorklogCalendarLayout.LocalDateTime(due.AddDays(1), TimeOnly.MinValue, zone);
+        var deadline = Deadline(due, zone);
         var remaining = deadline - now;
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, zone).DateTime);
         var kind = remaining <= TimeSpan.Zero ? DueDateKind.Overdue : due == today ? DueDateKind.Today

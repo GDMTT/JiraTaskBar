@@ -13,6 +13,7 @@ public sealed partial class BarViewModel : ObservableObject
     private readonly AppController _app;
     private readonly Dictionary<string, TicketViewModel> _byKey = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<JiraIssue> _lastIssues = [];
+    private long _lastFilterMinute = long.MinValue;
 
     public BarViewModel(AppController app)
     {
@@ -27,13 +28,14 @@ public sealed partial class BarViewModel : ObservableObject
     public string FilterLabel => Filter.IsActive ? "Filters ●" : "Filter…";
     public string FilterTooltip => Filter.IsActive
         ? "Taskbar filters active. The running ticket remains visible. Click to edit or reset."
-        : "Filter by ticket type, remaining estimate, ticket number, and summary";
+        : "Filter by ticket type, time until due date, ticket number, and summary";
     public IReadOnlyList<string> AvailableTypes => _lastIssues.Select(i => i.IssueType)
         .Where(t => !string.IsNullOrWhiteSpace(t)).Concat(Filter.Types).Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList();
 
     public void ApplyFilter(TicketFilter filter)
     {
         Filter = filter;
+        _lastFilterMinute = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60;
         OnPropertyChanged(nameof(FilterLabel));
         OnPropertyChanged(nameof(FilterTooltip));
         OnPropertyChanged(nameof(EmptyText));
@@ -117,6 +119,12 @@ public sealed partial class BarViewModel : ObservableObject
     /// <summary>Called every second to update the running timer text.</summary>
     public void Tick()
     {
+        var minute = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60;
+        if (Filter.UsesCurrentTime && minute != _lastFilterMinute)
+        {
+            _lastFilterMinute = minute;
+            Rebuild();
+        }
         var activeKey = _app.Tracker.ActiveKey;
         foreach (var t in Tickets)
         {
@@ -144,6 +152,7 @@ public sealed partial class BarViewModel : ObservableObject
     private void Rebuild()
     {
         var activeKey = _app.Tracker.ActiveKey;
+        var now = DateTimeOffset.UtcNow;
         var target = new List<TicketViewModel>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -152,7 +161,7 @@ public sealed partial class BarViewModel : ObservableObject
             var vm = GetOrCreate(issue);
             vm.Issue = issue;
             vm.IsStale = false;
-            if (!Filter.Matches(issue)) continue;
+            if (!Filter.Matches(issue, now, TimeZoneInfo.Local)) continue;
             target.Add(vm);
             seen.Add(issue.Key);
         }
