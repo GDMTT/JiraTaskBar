@@ -12,6 +12,13 @@ public class DueDateTests
         var now = new DateTimeOffset(2026, 11, 9, 12, 0, 0, TimeSpan.Zero);
         Assert.Equal(DueDateKind.None, DueDateProgress.Calculate(Issue(null), now, TimeZoneInfo.Utc).Kind);
         Assert.Null(DueDateProgress.Calculate(Issue(new DateOnly(2026, 11, 10)) with { CreatedAt = null }, now, TimeZoneInfo.Utc).RemainingFraction);
+        foreach (var created in new[] { new DateTimeOffset(2026, 11, 11, 0, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 11, 12, 0, 0, 0, TimeSpan.Zero) })
+        {
+            var invalid = DueDateProgress.Calculate(Issue(new DateOnly(2026, 11, 10)) with { CreatedAt = created }, now, TimeZoneInfo.Utc);
+            Assert.Null(invalid.RemainingFraction);
+            Assert.Equal(DueDateKind.Soon, invalid.Kind);
+            Assert.Contains("1d 12h 0m 0s", invalid.Tooltip);
+        }
     }
     [Fact]
     public void Local_end_of_day_and_exact_deadline_are_respected()
@@ -36,6 +43,8 @@ public class DueDateTests
         Assert.NotNull(parsed.CreatedAt);
         Assert.Equal(new DateOnly(2026, 11, 10), parsed.DueDate);
         var now = new DateTimeOffset(2026, 11, 9, 12, 0, 0, TimeSpan.Zero);
+        Assert.Equal(0.15, DueDateProgress.Calculate(parsed, now, TimeZoneInfo.Utc).RemainingFraction!.Value, 10);
+        Assert.Equal(2.5 / 11, DueDateProgress.Calculate(parsed with { DueDate = new DateOnly(2026, 11, 11) }, now, TimeZoneInfo.Utc).RemainingFraction!.Value, 10);
         Assert.True(DueDateProgress.Calculate(parsed, now, TimeZoneInfo.Utc).RemainingFraction >
             DueDateProgress.Calculate(parsed, now.AddHours(1), TimeZoneInfo.Utc).RemainingFraction);
     }
