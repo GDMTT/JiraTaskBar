@@ -12,6 +12,8 @@ public sealed class AskRovoWindow : Window
     public AskRovoWindow(JiraIssue issue, JiraConnection connection)
     {
         Title = $"Ask Rovo — {issue.Key}";
+        SetResourceReference(BackgroundProperty, "ApplicationBackgroundBrush");
+        SetResourceReference(ForegroundProperty, "TextFillColorPrimaryBrush");
         Width = 540;
         SizeToContent = SizeToContent.Height;
         MaxHeight = SystemParameters.WorkArea.Height;
