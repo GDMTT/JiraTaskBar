@@ -13,6 +13,8 @@ public sealed class TicketFilterWindow : Window
     {
         Filter = initial;
         Title = "Filter taskbar tickets";
+        SetResourceReference(BackgroundProperty, "ApplicationBackgroundBrush");
+        SetResourceReference(ForegroundProperty, "TextFillColorPrimaryBrush");
         Width = 460;
         MaxHeight = SystemParameters.WorkArea.Height;
         SizeToContent = SizeToContent.Height;
