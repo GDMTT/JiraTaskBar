@@ -69,6 +69,30 @@ public class WindowSmokeTests
                 indicatorWindow.UpdateLayout();
                 var rendered = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
                 rendered.Render(indicator);
+                if (state.Kind == DueDateKind.Today)
+                {
+                    var dueToday = new DueDateIndicator { Width = 16, Height = 16, State = state };
+                    dueToday.Measure(new Size(16, 16));
+                    dueToday.Arrange(new Rect(0, 0, 16, 16));
+                    rendered = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                    rendered.Render(dueToday);
+                    var pixels = new byte[16 * 16 * 4];
+                    rendered.CopyPixels(pixels, 16 * 4, 0);
+                    var redPixels = 0;
+                    var whiteOverlayPixels = 0;
+                    for (var y = 0; y < 16; y++)
+                    for (var x = 0; x < 16; x++)
+                    {
+                        var pixel = (y * 16 + x) * 4;
+                        if (pixels[pixel + 3] > 100 && pixels[pixel + 2] > 100 &&
+                            pixels[pixel + 2] > pixels[pixel + 1] * 2) redPixels++;
+                        if (x is >= 4 and <= 11 && y is >= 3 and <= 12 && pixels[pixel + 3] > 240 &&
+                            pixels[pixel] > 240 && pixels[pixel + 1] > 240 && pixels[pixel + 2] > 240) whiteOverlayPixels++;
+                    }
+                    Assert.True(redPixels > 0 && whiteOverlayPixels == 0,
+                        $"The due-today indicator should be a red pie without a white letter overlay. " +
+                        $"Found {redPixels} red pixels and {whiteOverlayPixels} white overlay pixels.");
+                }
                 Assert.Same(indicator, indicator.InputHitTest(new Point(8, 8)));
             }
             indicatorWindow.Close();

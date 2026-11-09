@@ -21,7 +21,7 @@ public sealed class DueDateIndicator : FrameworkElement
         var center = new Point(ActualWidth / 2, ActualHeight / 2);
         var radius = Math.Max(0, Math.Min(ActualWidth, ActualHeight) / 2 - 1);
         if (radius == 0) return;
-        var brush = state?.Kind switch { DueDateKind.Overdue => Brushes.Firebrick, DueDateKind.Today => Brushes.DarkOrange,
+        var brush = state?.Kind switch { DueDateKind.Overdue => Brushes.Firebrick, DueDateKind.Today => Brushes.Firebrick,
             DueDateKind.Soon => Brushes.Goldenrod, DueDateKind.Upcoming => Brushes.SteelBlue, _ => Brushes.Gray };
         dc.DrawEllipse(null, new Pen(brush, 1.2), center, radius, radius);
         if (state?.RemainingFraction is > 0 and < 1 and var fraction)
@@ -38,7 +38,7 @@ public sealed class DueDateIndicator : FrameworkElement
             dc.DrawGeometry(brush, null, geometry);
         }
         else if (state?.RemainingFraction >= 1) dc.DrawEllipse(brush, null, center, radius, radius);
-        var symbol = state?.Kind switch { DueDateKind.Overdue => "!", DueDateKind.Today => "T", DueDateKind.Soon => "S", DueDateKind.None => "–", _ => "" };
+        var symbol = state?.Kind switch { DueDateKind.Overdue => "!", DueDateKind.Soon => "S", DueDateKind.None => "–", _ => "" };
         if (symbol.Length > 0)
         {
             var text = new FormattedText(symbol, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
