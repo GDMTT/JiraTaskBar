@@ -87,12 +87,44 @@ public class SecretStoreTests : IDisposable
     [Fact]
     public void Inaccessible_or_corrupt_vault_returns_no_credentials()
     {
+        var store = Store;
         _backend.FailReads = true;
-        Assert.Null(Store.Load());
+        Assert.Null(store.Load());
+        Assert.Equal(CredentialLoadStatus.Unavailable, store.LastLoadStatus);
 
         _backend.FailReads = false;
         _backend.Data = Encoding.UTF8.GetBytes("not json");
-        Assert.Null(Store.Load());
+        Assert.Null(store.Load());
+        Assert.Equal(CredentialLoadStatus.Unavailable, store.LastLoadStatus);
+    }
+
+    [Fact]
+    public void Corrupt_vault_blocks_legacy_fallback()
+    {
+        _backend.Data = Encoding.UTF8.GetBytes("not json");
+        var legacyPath = _dir.File("token.bin");
+        File.WriteAllText(legacyPath, "legacy placeholder");
+        var store = new SecretStore(_dir.File("credentials.bin"), legacyPath, _backend,
+            (path, _) => path == legacyPath ? Encoding.UTF8.GetBytes("old-token") : null);
+
+        Assert.Null(store.Load());
+        Assert.Equal(CredentialLoadStatus.Unavailable, store.LastLoadStatus);
+        Assert.NotEqual(CredentialLoadStatus.Missing, store.LastLoadStatus);
+    }
+
+    [Fact]
+    public void Cleanup_failures_do_not_hide_verified_credentials()
+    {
+        var path = _dir.File("credentials.bin");
+        File.WriteAllText(path, "legacy placeholder");
+        var plain = JsonSerializer.SerializeToUtf8Bytes(Creds);
+        var store = new SecretStore(path, backend: _backend,
+            legacyReader: (candidate, _) => candidate == path ? plain.ToArray() : null,
+            legacyDelete: _ => throw new IOException("locked"));
+
+        Assert.Equal(Creds, store.Load());
+        Assert.True(File.Exists(path));
+        Assert.Equal(Creds, store.Load());
     }
 
     [Fact]

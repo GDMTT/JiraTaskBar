@@ -12,6 +12,8 @@ namespace JiraTaskBar.Core.Storage;
 /// <param name="CloudId">Set when the token is a scoped token (calls go through the API gateway).</param>
 public sealed record StoredCredentials(string SiteUrl, string Email, string ApiToken, string? CloudId = null);
 
+public enum CredentialLoadStatus { Missing, Loaded, Unavailable }
+
 /// <summary>
 /// Stores <see cref="StoredCredentials"/> in Windows Credential Manager for the current user.
 /// Because the site is inside the credential, editing settings.json can't redirect the token.
@@ -27,20 +29,25 @@ public sealed class SecretStore
     private readonly string? _legacyTokenPath;
     private readonly ICredentialBackend _backend;
     private readonly Func<string, byte[], byte[]?> _unprotect;
+    private readonly Action<string> _deleteFile;
 
     /// <param name="path">The previous version's encrypted credentials file, used only for migration.</param>
     /// <param name="legacyTokenPath">The v1 file that held only the token, if it may still exist.</param>
     public SecretStore(string path, string? legacyTokenPath = null, ICredentialBackend? backend = null,
-        Func<string, byte[], byte[]?>? legacyReader = null)
+        Func<string, byte[], byte[]?>? legacyReader = null, Action<string>? legacyDelete = null)
     {
         _path = path;
         _legacyTokenPath = legacyTokenPath;
         _backend = backend ?? new WindowsCredentialBackend();
         _unprotect = legacyReader ?? Unprotect;
+        _deleteFile = legacyDelete ?? File.Delete;
     }
+
+    public CredentialLoadStatus LastLoadStatus { get; private set; } = CredentialLoadStatus.Missing;
 
     public StoredCredentials? Load()
     {
+        LastLoadStatus = CredentialLoadStatus.Missing;
         byte[]? stored;
         try
         {
@@ -49,28 +56,49 @@ public sealed class SecretStore
         catch (CredentialBackendException)
         {
             // An inaccessible vault must not silently fall back to a possibly stale credential.
+            LastLoadStatus = CredentialLoadStatus.Unavailable;
             return null;
         }
 
         if (stored is not null)
         {
-            try { return Deserialize(stored); }
+            try
+            {
+                var credentials = Deserialize(stored);
+                LastLoadStatus = credentials is null ? CredentialLoadStatus.Unavailable : CredentialLoadStatus.Loaded;
+                return credentials;
+            }
             finally { CryptographicOperations.ZeroMemory(stored); }
         }
 
-        var plain = _unprotect(_path, Entropy);
-        if (plain is null) return null;
+        byte[]? plain;
+        try { plain = _unprotect(_path, Entropy); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)
+        {
+            LastLoadStatus = CredentialLoadStatus.Unavailable;
+            return null;
+        }
+        if (plain is null)
+        {
+            LastLoadStatus = File.Exists(_path) ? CredentialLoadStatus.Unavailable : CredentialLoadStatus.Missing;
+            return null;
+        }
         try
         {
             var credentials = Deserialize(plain);
-            if (credentials is null) return null;
+            if (credentials is null)
+            {
+                LastLoadStatus = CredentialLoadStatus.Unavailable;
+                return null;
+            }
+            LastLoadStatus = CredentialLoadStatus.Loaded;
 
             // Keep using the valid legacy credential if migration is temporarily unavailable,
             // and keep the file so the next startup can retry.
             try
             {
                 WriteAndVerify(plain);
-                File.Delete(_path);
+                DeleteFileBestEffort(_path);
             }
             catch (CredentialBackendException) { }
             return credentials;
@@ -89,7 +117,7 @@ public sealed class SecretStore
         {
             CryptographicOperations.ZeroMemory(plain);
         }
-        if (File.Exists(_path)) File.Delete(_path);
+        DeleteFileBestEffort(_path);
         DeleteLegacy();
     }
 
@@ -103,13 +131,13 @@ public sealed class SecretStore
 
     public void DeleteLegacy()
     {
-        if (_legacyTokenPath is not null && File.Exists(_legacyTokenPath)) File.Delete(_legacyTokenPath);
+        if (_legacyTokenPath is not null) DeleteFileBestEffort(_legacyTokenPath);
     }
 
     public void Clear()
     {
         _backend.Delete();
-        if (File.Exists(_path)) File.Delete(_path);
+        DeleteFileBestEffort(_path);
         DeleteLegacy();
     }
 
@@ -125,6 +153,13 @@ public sealed class SecretStore
                 throw new CredentialBackendException("Credential Manager returned different credential data.");
         }
         finally { CryptographicOperations.ZeroMemory(verified); }
+    }
+
+    private void DeleteFileBestEffort(string path)
+    {
+        if (!File.Exists(path)) return;
+        try { _deleteFile(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     private static StoredCredentials? Deserialize(byte[] plain)
