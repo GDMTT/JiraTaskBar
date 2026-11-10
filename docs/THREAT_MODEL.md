@@ -32,7 +32,7 @@ The review found **three defects to fix before wider use**. All three are now **
                        │   └─ ShellExecute → default browser / Explorer             TB5   │  │
                        │                                                                  │  │
                        │  %LOCALAPPDATA%\JiraTaskBar   (TB2: any same-user process)       │  │
-                       │   settings.json · credentials.bin (DPAPI) · state.json ·         │  │
+                       │   Credential Manager · settings.json · state.json ·              │  │
                        │   pending-worklogs.json · log.txt · pending\<guid>\* · WebView2\ │  │
                        │  HKCU\...\Run\JiraTaskBar                                        │  │
                        └──────────────────────────────────────────────────────────────────┼──┘
@@ -60,7 +60,7 @@ The review found **three defects to fix before wider use**. All three are now **
 
 | Asset | Why it matters | Where |
 |---|---|---|
-| **A1 API token** | Equivalent to a password for the user's Atlassian account. Bypasses SSO/MFA. | `credentials.bin` (DPAPI, together with site and email), process memory, `Authorization` header |
+| **A1 API token** | Equivalent to a password for the user's Atlassian account. Bypasses SSO/MFA. | Windows Credential Manager (together with site and email), process memory, `Authorization` header |
 | **A2 Comment confidentiality** | Internal notes on Service Management tickets must not reach customers. | Comment editor, Jira API |
 | **A3 Worklog integrity** | Time records may feed billing, SLAs and payroll. | `state.json`, `pending-worklogs.json`, Jira |
 | **A4 Attachments / screenshots** | Pasted screenshots often contain sensitive data. | `pending\<guid>\`, WebView2 cache, Jira |
@@ -71,7 +71,7 @@ The review found **three defects to fix before wider use**. All three are now **
 
 ### 4.1 What the app does today
 - It sends `Authorization: Basic base64(email:apiToken)` on every request to the configured site ([JiraClient.cs:33](../src/JiraTaskBar.Core/Jira/JiraClient.cs#L33)).
-- The token is validated once with `GET /rest/api/3/myself`, then stored encrypted with DPAPI for the current user, using fixed app-specific entropy ([SecretStore.cs:11](../src/JiraTaskBar.Core/Storage/SecretStore.cs#L11)).
+- The token is validated once with `GET /rest/api/3/myself`, then stored with its site and email as the `JiraTaskBar/JiraCloud` Generic Credential in Windows Credential Manager ([SecretStore.cs](../src/JiraTaskBar.Core/Storage/SecretStore.cs), [WindowsCredentialBackend.cs](../src/JiraTaskBar.Core/Storage/WindowsCredentialBackend.cs)).
 - TLS uses .NET defaults: certificate validation is on, and the OS trust store is used, so corporate TLS inspection keeps working.
 
 ### 4.2 Properties of the credential
@@ -84,10 +84,11 @@ The review found **three defects to fix before wider use**. All three are now **
 | Revocation | Manual, by the user at id.atlassian.com, or by an org admin. | Fine, but someone has to notice the leak first. |
 | Org policy | Atlassian org admins can block API tokens for managed accounts. | **Check Gallagher's Atlassian policy** before rolling this out. Blocking tokens may be intended. |
 
-### 4.3 Storage (DPAPI, CurrentUser)
-- **Protects against:** other Windows users on the machine, and offline theft of the disk or a backup, unless the attacker also has the user's password or the domain DPAPI backup key.
-- **Does not protect against:** malware running as the user. It can call `CryptUnprotectData` itself, because the entropy is a constant in the binary. Windows Credential Manager gives the same protection level, so switching to it wouldn't change this. This limit is inherent to any desktop app that keeps a reusable secret.
-- **Domain admins** can decrypt using the domain DPAPI backup key. This is normal in a corporate environment.
+### 4.3 Storage (Windows Credential Manager)
+- **Protects against:** other Windows users on the machine and casual inspection of application data or backups. Windows protects the Generic Credential for the signed-in user.
+- **Does not protect against:** malware running as that user. Same-user code can call Credential Manager APIs and read a reusable credential. This limit is inherent to desktop applications that retain reusable secrets.
+- **Migration:** the previous CurrentUser DPAPI `credentials.bin` remains readable for a one-time migration. It is deleted only after the Credential Manager write is read back and verified; failed migration leaves the encrypted file intact for retry.
+- **Domain administrators** may still have recovery or endpoint-management capabilities over the user's secrets. This is normal in a corporate environment.
 
 ### 4.4 Comparison with alternatives
 
@@ -108,7 +109,7 @@ Ratings: **H**igh / **M**edium / **L**ow for likelihood × impact. ✅ means the
 
 | ID | Threat | Rating | Current state | Mitigation |
 |---|---|---|---|---|
-| S1 | **Token sent to the wrong host.** The site URL can be any host, including a typo, a look-alike domain, or a malicious edit to `settings.json`. The token is attached to every request. | **M** | `NormalizeSiteUrl` accepts any absolute URL ([Models.cs:28](../src/JiraTaskBar.Core/Jira/Models.cs#L28)). | Only accept `https://<name>.atlassian.net` (the deployment is Cloud-only). Store site and email *inside* the DPAPI blob together with the token, so editing `settings.json` can't redirect the credential. |
+| S1 | **Token sent to the wrong host.** The site URL can be any host, including a typo, a look-alike domain, or a malicious edit to `settings.json`. The token is attached to every request. | **M** | `NormalizeSiteUrl` accepts any absolute URL ([Models.cs:28](../src/JiraTaskBar.Core/Jira/Models.cs#L28)). | Only accept `https://<name>.atlassian.net` (the deployment is Cloud-only). Store site and email inside the same Credential Manager record as the token, so editing `settings.json` can't redirect the credential. |
 | S2 | **Plain-HTTP site URL** (`http://acme.atlassian.net`) sends Basic credentials in cleartext before Atlassian's HTTPS redirect. | **H** (impact) / L (likelihood) | The scheme is kept as typed ([Models.cs:34](../src/JiraTaskBar.Core/Jira/Models.cs#L34)). | Reject anything that isn't `https`. Also set `AllowAutoRedirect = false` and treat 3xx responses as errors, so credentials never follow a redirect. Current .NET strips `Authorization` on redirect, but make it explicit. |
 | S3 | Man-in-the-middle on Jira traffic. | L | ✅ Default TLS validation, and there is no override callback. | Keep it that way. Never add `ServerCertificateCustomValidationCallback`. |
 | S4 | A fake or modified JiraTaskBar.exe captures the token, for example by replacing the exe in a user-writable folder that the Run key points at. | L | The exe is unsigned. The Run key points to wherever it was launched from. | Sign the exe (Authenticode). Install it to `%ProgramFiles%`, which needs admin to write, and point the Run key there. |
@@ -167,7 +168,7 @@ Ratings: **H**igh / **M**edium / **L**ow for likelihood × impact. ✅ means the
 | 4 | "Reply to customer" shows a warning banner and relabels the button "Send to customer"; posting (including Ctrl+Enter) asks for confirmation, mentioning any attachments | I2 | S | ✅ Done |
 | 5 | Startup deletes leftover `pending\` screenshots and the WebView2 cache folder; the preview never fetches remote images (placeholder instead) and has a CSP: `default-src 'none'`, images only from the local attachments host | I5, I6 | S | ✅ Done |
 | 6 | **Scoped API tokens** supported and recommended (the default for new sign-ins). Calls go to `https://api.atlassian.com/ex/jira/{cloudId}/` with Basic auth. The cloud ID is looked up from `/_edge/tenant_info` without credentials, or pasted by hand, and must be a GUID (no path injection). It is stored inside the encrypted credentials. Settings lists the minimum scopes (`read:jira-work`, `write:jira-work`, `read:jira-user`) and warns when a classic token is used. Existing classic tokens keep working | §4, S1 | M | ✅ Done |
-| 7 | Site, email and token are stored as one DPAPI blob (`credentials.bin`, new entropy); `settings.json` no longer holds them. Changing the site needs the token re-entered. A v1 `token.bin` is migrated once, using the v1 `settings.json` site, then deleted | S1 | S | ✅ Done |
+| 7 | Site, email and token are stored as one Windows Generic Credential; `settings.json` no longer holds them. Changing the site needs the token re-entered. Existing `credentials.bin` and v1 `token.bin` data migrate once and are deleted only after the Credential Manager write is verified | S1 | S | ✅ Done |
 | 8 | "Hide the bar from screen sharing and recordings" (**on by default**) applies `WDA_EXCLUDEFROMCAPTURE` to the bar and to every tooltip and context menu as it opens. "Show ticket titles on the bar" can be turned off for keys-only buttons, with titles still in the tooltip | I4 | S | ✅ Done |
 | 9 | 401 shows one "Jira sign-in needed" prompt that leads to Settings; automatic refreshes and retries pause until the token is replaced (repeated failed sign-ins can trip Atlassian's account protection); worklogs stay queued. 429/503 are retried up to 3× honouring `Retry-After` (capped at 60 s), else 2/4/8 s back-off | D2, D3 | S | ✅ Done |
 | 10 | Code side done: `packages.lock.json` (locked mode in CI/release), NuGet Audit on all packages with high/critical failing the build, package source mapping, nuget.org repository signature **required** (trusted certs from `dotnet nuget trust source`), `build/publish.ps1` (locked restore → tests → single-file publish → optional Authenticode signing with timestamp → SHA-256). **Still needs IT:** confirm whether an internal feed is mandated, provide a code-signing certificate, and install under Program Files | E2, E3, S4 | M | ◐ Partly done |

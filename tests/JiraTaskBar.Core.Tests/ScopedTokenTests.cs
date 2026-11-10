@@ -94,7 +94,7 @@ public class ScopedCredentialStorageTests : IDisposable
     [Fact]
     public void Cloud_id_is_stored_with_the_token()
     {
-        var store = new SecretStore(_dir.File("credentials.bin"));
+        var store = new SecretStore(_dir.File("credentials.bin"), backend: new FakeCredentialBackend());
         var creds = new StoredCredentials("https://acme.atlassian.net/", "me@acme.com", "t", "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d");
 
         store.Save(creds);
@@ -106,7 +106,7 @@ public class ScopedCredentialStorageTests : IDisposable
     public void Credentials_saved_before_scoped_support_load_as_classic()
     {
         // A blob written by the previous version has no CloudId property.
-        var store = new SecretStore(_dir.File("credentials.bin"));
+        var store = new SecretStore(_dir.File("credentials.bin"), backend: new FakeCredentialBackend());
         store.Save(new StoredCredentials("https://acme.atlassian.net/", "me@acme.com", "t"));
 
         Assert.Null(store.Load()!.CloudId);

@@ -196,15 +196,27 @@ public sealed class AppController : IDisposable
     private StoredCredentials? LoadCredentials()
     {
         var credentials = _secrets.Load();
-        if (credentials is null && _secrets.LoadLegacyToken() is { Length: > 0 } legacyToken
+        var migrationComplete = credentials is not null;
+        if (credentials is null && _secrets.LastLoadStatus == CredentialLoadStatus.Missing &&
+            _secrets.LoadLegacyToken() is { Length: > 0 } legacyToken
             && !string.IsNullOrWhiteSpace(Settings.Email))
         {
             try
             {
                 var site = JiraConnection.NormalizeSiteUrl(Settings.SiteUrl ?? string.Empty);
                 credentials = new StoredCredentials(site.ToString(), Settings.Email.Trim(), legacyToken);
-                _secrets.Save(credentials);
-                Log.Info("Migrated credentials to the combined encrypted store");
+                try
+                {
+                    _secrets.Save(credentials);
+                    migrationComplete = true;
+                    Log.Info("Migrated credentials to Windows Credential Manager");
+                }
+                catch (CredentialBackendException ex)
+                {
+                    // Continue this session with the valid legacy credential. Its files and settings
+                    // remain in place so a later startup can retry the vault migration.
+                    Log.Error("Could not migrate credentials to Windows Credential Manager; legacy credentials were preserved", ex);
+                }
             }
             catch (ArgumentException ex)
             {
@@ -212,7 +224,7 @@ public sealed class AppController : IDisposable
             }
         }
 
-        if (Settings.SiteUrl is not null || Settings.Email is not null)
+        if (migrationComplete && (Settings.SiteUrl is not null || Settings.Email is not null))
         {
             Settings.SiteUrl = null;
             Settings.Email = null;
