@@ -8,6 +8,7 @@ public interface IJiraClient
 {
     JiraConnection Connection { get; }
     Task<JiraUser> GetMyselfAsync(CancellationToken ct = default);
+    Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
@@ -91,6 +92,25 @@ public sealed class JiraClient : IJiraClient
             node?["accountId"]?.GetValue<string>() ?? string.Empty,
             node?["displayName"]?.GetValue<string>() ?? string.Empty,
             node?["emailAddress"]?.GetValue<string>());
+    }
+
+    public async Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var node = await SendAsync(HttpMethod.Get, "rest/api/3/configuration", null, ct);
+            var config = node?["timeTrackingConfiguration"] ?? node;
+            var hours = config?["workingHoursPerDay"]?.GetValue<decimal>() ?? JiraDurationSettings.Default.HoursPerDay;
+            var days = config?["workingDaysPerWeek"]?.GetValue<decimal>() ?? JiraDurationSettings.Default.DaysPerWeek;
+            return hours is > 0 and <= 24 && days is > 0 and <= 7
+                ? new JiraDurationSettings(hours, days)
+                : JiraDurationSettings.Default;
+        }
+        catch (Exception ex) when (ex is JiraApiException { StatusCode: 403 or 404 }
+                                   or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            return JiraDurationSettings.Default;
+        }
     }
 
     public async Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default)

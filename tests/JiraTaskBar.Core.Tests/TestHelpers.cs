@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using JiraTaskBar.Core.Jira;
+using JiraTaskBar.Core.Storage;
 
 namespace JiraTaskBar.Core.Tests;
 
@@ -62,6 +63,32 @@ public sealed class TempDir : IDisposable
     }
 }
 
+public sealed class FakeCredentialBackend : ICredentialBackend
+{
+    public byte[]? Data { get; set; }
+    public bool FailReads { get; set; }
+    public bool FailWrites { get; set; }
+    public bool FailDeletes { get; set; }
+
+    public byte[]? Read()
+    {
+        if (FailReads) throw new CredentialBackendException("read failed");
+        return Data?.ToArray();
+    }
+
+    public void Write(byte[] credential)
+    {
+        if (FailWrites) throw new CredentialBackendException("write failed");
+        Data = credential.ToArray();
+    }
+
+    public void Delete()
+    {
+        if (FailDeletes) throw new CredentialBackendException("delete failed");
+        Data = null;
+    }
+}
+
 public sealed class FakeJiraClient : IJiraClient
 {
     public JiraConnection Connection { get; } = new(new Uri("https://example.atlassian.net/"), "me@example.com", "token");
@@ -84,6 +111,8 @@ public sealed class FakeJiraClient : IJiraClient
         throw new NotSupportedException();
 
     public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
+        Task.FromResult(JiraDurationSettings.Default);
     public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) => throw new NotSupportedException();

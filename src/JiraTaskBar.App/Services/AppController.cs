@@ -36,6 +36,7 @@ public sealed class AppController : IDisposable
 
     private HttpClient? _http;
     private IReadOnlyList<JiraPriority>? _priorities;
+    private JiraDurationSettings? _durationSettings;
     private TaskbarIcon? _tray;
     private BarWindow? _bar;
     private ContextReportWindow? _contextReportWindow;
@@ -78,6 +79,8 @@ public sealed class AppController : IDisposable
     public AppSettings Settings { get; private set; }
 
     public IJiraClient? Client { get; private set; }
+
+    public JiraDurationSettings DurationSettings => _durationSettings ?? JiraDurationSettings.Default;
 
     public TimeTracker Tracker { get; }
 
@@ -146,6 +149,7 @@ public sealed class AppController : IDisposable
         Client = null;
         Bar.RefreshConnectionState();
         _priorities = null;
+        _durationSettings = null;
         Icons.Reset();
 
         if (_credentials is null || TrySite() is not { } site) return;
@@ -196,15 +200,27 @@ public sealed class AppController : IDisposable
     private StoredCredentials? LoadCredentials()
     {
         var credentials = _secrets.Load();
-        if (credentials is null && _secrets.LoadLegacyToken() is { Length: > 0 } legacyToken
+        var migrationComplete = credentials is not null;
+        if (credentials is null && _secrets.LastLoadStatus == CredentialLoadStatus.Missing &&
+            _secrets.LoadLegacyToken() is { Length: > 0 } legacyToken
             && !string.IsNullOrWhiteSpace(Settings.Email))
         {
             try
             {
                 var site = JiraConnection.NormalizeSiteUrl(Settings.SiteUrl ?? string.Empty);
                 credentials = new StoredCredentials(site.ToString(), Settings.Email.Trim(), legacyToken);
-                _secrets.Save(credentials);
-                Log.Info("Migrated credentials to the combined encrypted store");
+                try
+                {
+                    _secrets.Save(credentials);
+                    migrationComplete = true;
+                    Log.Info("Migrated credentials to Windows Credential Manager");
+                }
+                catch (CredentialBackendException ex)
+                {
+                    // Continue this session with the valid legacy credential. Its files and settings
+                    // remain in place so a later startup can retry the vault migration.
+                    Log.Error("Could not migrate credentials to Windows Credential Manager; legacy credentials were preserved", ex);
+                }
             }
             catch (ArgumentException ex)
             {
@@ -212,7 +228,7 @@ public sealed class AppController : IDisposable
             }
         }
 
-        if (Settings.SiteUrl is not null || Settings.Email is not null)
+        if (migrationComplete && (Settings.SiteUrl is not null || Settings.Email is not null))
         {
             Settings.SiteUrl = null;
             Settings.Email = null;
@@ -260,6 +276,16 @@ public sealed class AppController : IDisposable
     {
         var client = Client ?? throw new InvalidOperationException("Not connected to Jira.");
         _priorities ??= await client.GetPrioritiesAsync();
+        try
+        {
+            _durationSettings ??= await client.GetTimeTrackingConfigurationAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                   or JiraApiException { StatusCode: 408 or 429 or >= 500 })
+        {
+            // Duration metadata is optional. Keep it uncached so a later refresh can retry.
+            Log.Error("Could not load Jira duration settings; using default duration units", ex);
+        }
         return await client.SearchAsync(Settings.Jql, _priorities);
     }
 
