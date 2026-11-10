@@ -106,7 +106,11 @@ public sealed class JiraClient : IJiraClient
                 ? new JiraDurationSettings(hours, days)
                 : JiraDurationSettings.Default;
         }
-        catch (Exception ex) when (ex is JiraApiException { StatusCode: 403 or 404 }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return JiraDurationSettings.Default;
+        }
+        catch (Exception ex) when (ex is JiraApiException or HttpRequestException
                                    or System.Text.Json.JsonException or InvalidOperationException)
         {
             return JiraDurationSettings.Default;

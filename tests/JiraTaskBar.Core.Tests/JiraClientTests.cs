@@ -43,6 +43,18 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Duration_configuration_failure_falls_back_to_defaults()
+    {
+        var (client, handler) = Create();
+        handler.Respond("{}", HttpStatusCode.InternalServerError);
+
+        var settings = await client.GetTimeTrackingConfigurationAsync();
+
+        Assert.Equal(JiraDurationSettings.Default, settings);
+        Assert.Equal("/rest/api/3/configuration", handler.Requests.Single().PathAndQuery);
+    }
+
+    [Fact]
     public async Task Search_ranks_by_site_priority_order_then_key()
     {
         var (client, handler) = Create();
