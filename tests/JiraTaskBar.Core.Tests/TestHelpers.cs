@@ -111,6 +111,8 @@ public sealed class FakeJiraClient : IJiraClient
         throw new NotSupportedException();
 
     public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
+        Task.FromResult(JiraDurationSettings.Default);
     public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) => throw new NotSupportedException();

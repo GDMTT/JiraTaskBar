@@ -30,6 +30,19 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Reads_site_duration_conventions()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"timeTrackingConfiguration":{"workingHoursPerDay":7.5,"workingDaysPerWeek":4}}""");
+
+        var settings = await client.GetTimeTrackingConfigurationAsync();
+
+        Assert.Equal(7.5m, settings.HoursPerDay);
+        Assert.Equal(4m, settings.DaysPerWeek);
+        Assert.Equal("/rest/api/3/configuration", handler.Requests.Single().PathAndQuery);
+    }
+
+    [Fact]
     public async Task Search_ranks_by_site_priority_order_then_key()
     {
         var (client, handler) = Create();
