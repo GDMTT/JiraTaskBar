@@ -142,6 +142,22 @@ public class SecretStoreTests : IDisposable
     }
 
     [Fact]
+    public void Clear_reports_legacy_cleanup_failure_without_removing_vault_credentials()
+    {
+        Store.Save(Creds);
+        var legacyPath = _dir.File("token.bin");
+        File.WriteAllText(legacyPath, "legacy placeholder");
+        var store = new SecretStore(_dir.File("credentials.bin"), legacyPath, _backend,
+            legacyDelete: _ => throw new IOException("locked"));
+
+        Assert.Throws<IOException>(() => store.Clear());
+
+        Assert.NotNull(_backend.Data);
+        Assert.Equal(Creds, store.Load());
+        Assert.True(File.Exists(legacyPath));
+    }
+
+    [Fact]
     public void Site_and_email_are_not_written_to_settings()
     {
         var json = JsonSerializer.Serialize(new AppSettings());

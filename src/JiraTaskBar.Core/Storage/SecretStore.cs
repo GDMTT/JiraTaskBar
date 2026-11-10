@@ -136,9 +136,9 @@ public sealed class SecretStore
 
     public void Clear()
     {
+        DeleteFile(_path);
+        if (_legacyTokenPath is not null) DeleteFile(_legacyTokenPath);
         _backend.Delete();
-        DeleteFileBestEffort(_path);
-        DeleteLegacy();
     }
 
     private void WriteAndVerify(byte[] plain)
@@ -160,6 +160,11 @@ public sealed class SecretStore
         if (!File.Exists(path)) return;
         try { _deleteFile(path); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    private void DeleteFile(string path)
+    {
+        if (File.Exists(path)) _deleteFile(path);
     }
 
     private static StoredCredentials? Deserialize(byte[] plain)
