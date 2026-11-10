@@ -264,7 +264,16 @@ public sealed class AppController : IDisposable
     {
         var client = Client ?? throw new InvalidOperationException("Not connected to Jira.");
         _priorities ??= await client.GetPrioritiesAsync();
-        _durationSettings ??= await client.GetTimeTrackingConfigurationAsync();
+        try
+        {
+            _durationSettings ??= await client.GetTimeTrackingConfigurationAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
+                                   or JiraApiException { StatusCode: 408 or 429 or >= 500 })
+        {
+            // Duration metadata is optional. Keep it uncached so a later refresh can retry.
+            Log.Error("Could not load Jira duration settings; using default duration units", ex);
+        }
         return await client.SearchAsync(Settings.Jql, _priorities);
     }
 
