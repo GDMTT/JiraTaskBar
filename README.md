@@ -95,3 +95,9 @@ CI binaries are unsigned until a managed code-signing certificate is configured.
 - `src/JiraTaskBar.Core`: the Jira REST client, the time tracker, the worklog retry queue, settings/secret storage, and the wiki-markup preview. It has no UI code.
 - `src/JiraTaskBar.App`: the WPF app (bar, AppBar docking interop, comment and settings windows, tray).
 - `tests/`: unit tests for Core, plus a smoke test that loads every window with the real XAML resources.
+
+## License
+
+Jira TaskBar is licensed under the [GNU General Public License v3.0 only](LICENSE) (`GPL-3.0-only`).
+
+You may use, study, modify and redistribute the program. If you distribute the program or a modified version, you must provide the corresponding source under GPLv3, preserve the license and notices, and license the combined work under GPLv3. Private use and internal modifications do not require publication. GPLv3 includes an express patent grant and disclaims warranty; it does not grant rights to the Jira, Atlassian or third-party dependency trademarks.

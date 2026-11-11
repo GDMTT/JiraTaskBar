@@ -61,6 +61,10 @@ if ($Version) {
 dotnet @publishArguments
 if ($LASTEXITCODE) { throw 'Publish failed.' }
 
+# Ship the governing terms beside every distributed binary. Package metadata alone
+# does not make the GPL available to recipients of the standalone executable.
+Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $Output 'LICENSE')
+
 $exe = Join-Path $Output 'JiraTaskBar.exe'
 if ($CertificateThumbprint) {
     Write-Host '== Sign' -ForegroundColor Cyan

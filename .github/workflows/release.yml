@@ -59,6 +59,7 @@ jobs:
           path: |
             artifacts/publish/JiraTaskBar.exe
             artifacts/publish/JiraTaskBar.exe.sha256
+            artifacts/publish/LICENSE
           if-no-files-found: error
 
       - name: Publish GitHub release
@@ -71,3 +72,4 @@ jobs:
           files: |
             artifacts/publish/JiraTaskBar.exe
             artifacts/publish/JiraTaskBar.exe.sha256
+            artifacts/publish/LICENSE
