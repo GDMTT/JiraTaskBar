@@ -277,6 +277,50 @@ public class WindowSmokeTests
         });
         Assert.Equal(1, client.UpdateCount);
         Assert.Equal(600, client.Worklogs[0].TimeSpentSeconds);
+
+        // Long hours must not be interpreted as days; malformed values cannot close/save.
+        foreach (var (input, expected) in new[]
+        {
+            ("24:00:00", 86400), ("25:30:15", 91815), ("1:30", 5400),
+            ("596523:14:07", int.MaxValue), ("0:01:00", 60),
+        })
+        {
+            DoubleClick(dialog =>
+            {
+                var date = Descendants<System.Windows.Controls.DatePicker>(dialog).Single(t => t.Name == "StartDate");
+                var time = Descendants<System.Windows.Controls.TextBox>(dialog).Single(t => t.Name == "StartTimeBox");
+                var duration = Descendants<System.Windows.Controls.TextBox>(dialog).Single(t => t.Name == "DurationBox");
+                Assert.Equal("Start date", System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(date).GetName());
+                Assert.Equal("Local start time", System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(time).GetName());
+                Assert.Equal("Duration (hours:minutes:seconds)", System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(duration).GetName());
+                var save = Descendants<System.Windows.Controls.Button>(dialog).Single(b => b.Name == "SaveButton");
+                foreach (var invalid in new[] { "24:60:00", "1:00:60", "-1:00:00", "1.00:00:00", "0:00:59", "596523:14:08", "2147483648:00:00", "", "1" })
+                {
+                    duration.Text = invalid;
+                    save.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                    Assert.True(dialog.IsVisible, $"Invalid duration {invalid} must keep the editor open.");
+                }
+                duration.Text = input;
+                save.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            });
+            Assert.Equal(expected, Assert.Single(client.Worklogs).TimeSpentSeconds);
+        }
+
+        // A drag away and back must restore the overlap lane without replacing the block.
+        client.Worklogs = [original, original with { Id = "124" }];
+        Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+        calendar.UpdateLayout();
+        var overlap = Descendants<System.Windows.Controls.Border>(calendar)
+            .Single(b => b.Tag?.GetType().Name == "CalendarEntry" && System.Windows.Controls.Grid.GetColumn(b) % 2 == 1);
+        var originalColumn = System.Windows.Controls.Grid.GetColumn(overlap);
+        var updatesBeforeDrag = client.UpdateCount;
+        Click("Worklog_MouseLeftButtonDown", overlap, 1);
+        // The move preview uses the day's first lane after crossing a day boundary.
+        System.Windows.Controls.Grid.SetColumn(overlap, originalColumn - 1);
+        Click("Worklog_MouseLeftButtonUp", overlap, 1);
+        Assert.Equal(originalColumn, System.Windows.Controls.Grid.GetColumn(overlap));
+        Assert.Contains(overlap, Descendants<System.Windows.Controls.Border>(calendar));
+        Assert.Equal(updatesBeforeDrag, client.UpdateCount);
         calendar.Close();
     }
 

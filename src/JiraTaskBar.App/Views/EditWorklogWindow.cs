@@ -36,11 +36,14 @@ public sealed class EditWorklogWindow : Window
         Content = panel;
         panel.Children.Add(new TextBlock { Text = "Date and local start time" });
         _date = new DatePicker { Name = "StartDate", SelectedDate = started.LocalDateTime.Date };
+        System.Windows.Automation.AutomationProperties.SetName(_date, "Start date");
         panel.Children.Add(_date);
         _time = new TextBox { Name = "StartTimeBox", Text = _originalTimeText, Margin = new Thickness(0, 6, 0, 12) };
+        System.Windows.Automation.AutomationProperties.SetName(_time, "Local start time");
         panel.Children.Add(_time);
         panel.Children.Add(new TextBlock { Text = "Duration (hours:minutes:seconds)" });
         _duration = new TextBox { Name = "DurationBox", Text = _originalDurationText, Margin = new Thickness(0, 6, 0, 12) };
+        System.Windows.Automation.AutomationProperties.SetName(_duration, "Duration (hours:minutes:seconds)");
         panel.Children.Add(_duration);
         panel.Children.Add(new TextBlock { Text = "Worklog description", FontWeight = FontWeights.SemiBold });
         panel.Children.Add(new TextBox
@@ -74,13 +77,11 @@ public sealed class EditWorklogWindow : Window
         var seconds = _originalSeconds;
         if (_duration.Text != _originalDurationText)
         {
-            if (!TimeSpan.TryParse(_duration.Text.Trim(), CultureInfo.InvariantCulture, out var duration) ||
-                duration < TimeSpan.FromMinutes(1) || duration.TotalSeconds > int.MaxValue)
+            if (!TryDurationSeconds(_duration.Text, out seconds))
             {
                 _error.Text = "Enter a duration of at least 1 minute, for example 1:30:00.";
                 return;
             }
-            seconds = (int)Math.Round(duration.TotalSeconds);
         }
 
         // Keep exact timestamps (including the offset during a repeated DST hour) and
@@ -90,5 +91,23 @@ public sealed class EditWorklogWindow : Window
             : WorklogCalendarLayout.LocalDateTime(DateOnly.FromDateTime(date), time, TimeZoneInfo.Local);
         Seconds = seconds;
         DialogResult = true;
+    }
+
+    private static bool TryDurationSeconds(string text, out int seconds)
+    {
+        seconds = 0;
+        var parts = text.Trim().Split(':');
+        if (parts.Length is not (2 or 3) ||
+            !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var hours) ||
+            !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var minutes) ||
+            minutes > 59) return false;
+        var remainder = 0;
+        if (parts.Length == 3 &&
+            (!int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out remainder) || remainder > 59))
+            return false;
+        var total = (long)hours * 3600 + minutes * 60 + remainder;
+        if (total < 60 || total > int.MaxValue) return false;
+        seconds = (int)total;
+        return true;
     }
 }

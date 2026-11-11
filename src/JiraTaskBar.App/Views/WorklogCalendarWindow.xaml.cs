@@ -547,6 +547,7 @@ public partial class WorklogCalendarWindow
         if (day == edit.OriginalDay && slot == edit.OriginalSlot && span == edit.OriginalSpan)
         {
             StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
+            Grid.SetColumn(edit.Block, edit.OriginalColumn);
             // Keep the block alive between clicks so WPF can recognize a double-click.
             FinishCalendarEdit();
             return;
@@ -829,6 +830,7 @@ public partial class WorklogCalendarWindow
         public CalendarEntry Entry { get; } = entry;
         public EditMode Mode { get; } = mode;
         public Border Block { get; } = block;
+        public int OriginalColumn { get; } = Grid.GetColumn(block);
         public int OriginalDay { get; } = originalDay;
         public int OriginalSlot { get; } = originalSlot;
         public int OriginalSpan { get; } = originalSpan;
