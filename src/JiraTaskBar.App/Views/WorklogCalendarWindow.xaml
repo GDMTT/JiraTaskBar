@@ -56,7 +56,7 @@
         <DockPanel Grid.Row="4" LastChildFill="False" Margin="20,0,20,18">
             <TextBlock x:Name="RangeTotal" VerticalAlignment="Center" FontWeight="SemiBold" />
             <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Opacity="0.6"
-                       Text="Saved Jira worklogs are blue; pending local worklogs are amber." />
+                       Text="The selected ticket is blue; other Jira worklogs are slate; pending local worklogs are amber." />
             <ui:Button DockPanel.Dock="Right" Content="Close" Click="Close_Click" />
         </DockPanel>
     </Grid>
