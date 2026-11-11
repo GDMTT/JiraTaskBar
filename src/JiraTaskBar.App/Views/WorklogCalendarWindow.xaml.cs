@@ -26,6 +26,8 @@ public partial class WorklogCalendarWindow
     private readonly Func<IReadOnlyList<JiraIssue>> _issues;
     private readonly CancellationTokenSource _closed = new();
     private readonly int _resolutionMinutes;
+    private readonly DispatcherTimer _currentTimeTimer = new();
+    private Border? _currentTimeLine;
     private CancellationTokenSource? _load;
     private int _loadVersion;
     private bool _isClosed;
@@ -61,6 +63,8 @@ public partial class WorklogCalendarWindow
         ResolutionText.Text = $"{_resolutionMinutes}-minute resolution";
         ViewModeBox.SelectedIndex = 1;
         RenderScheduler(resetScroll: true);
+        _currentTimeTimer.Interval = TimeSpan.FromMinutes(1);
+        _currentTimeTimer.Tick += CurrentTimeTimer_Tick;
     }
 
     public string IssueKey => _issue.Key;
@@ -91,7 +95,14 @@ public partial class WorklogCalendarWindow
         else RenderScheduler();
     }
 
-    private async void Window_Loaded(object sender, RoutedEventArgs e) => await RefreshAsync();
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        UpdateCurrentTime(DateTime.Now);
+        _currentTimeTimer.Start();
+        await RefreshAsync();
+    }
+
+    private void CurrentTimeTimer_Tick(object? sender, EventArgs e) => UpdateCurrentTime(DateTime.Now);
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
 
     public async Task<bool> RefreshAsync()
@@ -187,6 +198,9 @@ public partial class WorklogCalendarWindow
 
         SchedulerHost.Children.Clear();
         _timeScroll = null;
+        _timeGrid = null;
+        _timeRange = null;
+        _currentTimeLine = null;
         if (_view == WorklogCalendarView.Month)
             RenderMonth(range, entries);
         else
@@ -407,6 +421,20 @@ public partial class WorklogCalendarWindow
             }
         }
 
+        _currentTimeLine = new Border
+        {
+            Height = 2,
+            Background = Brushes.OrangeRed,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false,
+        };
+        System.Windows.Automation.AutomationProperties.SetName(_currentTimeLine, "Current time");
+        Grid.SetRow(_currentTimeLine, 1);
+        Grid.SetRowSpan(_currentTimeLine, slots);
+        Panel.SetZIndex(_currentTimeLine, 3);
+        grid.Children.Add(_currentTimeLine);
+        UpdateCurrentTime(DateTime.Now);
+
         _timeScroll = new ScrollViewer
         {
             Content = grid,
@@ -417,6 +445,22 @@ public partial class WorklogCalendarWindow
         if (resetScroll)
             Dispatcher.BeginInvoke(() => _timeScroll?.ScrollToVerticalOffset(8 * 60 / _resolutionMinutes * slotHeight),
                 DispatcherPriority.Loaded);
+    }
+
+    private void UpdateCurrentTime(DateTime now)
+    {
+        if (_currentTimeLine is null || _timeRange is not { } range) return;
+        var today = DateOnly.FromDateTime(now);
+        if (today < range.Start || today >= range.EndExclusive)
+        {
+            _currentTimeLine.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        Grid.SetColumn(_currentTimeLine, today.DayNumber - range.Start.DayNumber + 1);
+        _currentTimeLine.Margin = new Thickness(0,
+            now.TimeOfDay.TotalMinutes / _resolutionMinutes * _slotHeight, 0, 0);
+        _currentTimeLine.Visibility = Visibility.Visible;
     }
 
     private Border WorklogBlock(CalendarEntry entry)
@@ -775,6 +819,8 @@ public partial class WorklogCalendarWindow
     private void Window_Closed(object? sender, EventArgs e)
     {
         _isClosed = true;
+        _currentTimeTimer.Stop();
+        _currentTimeTimer.Tick -= CurrentTimeTimer_Tick;
         _closed.Cancel();
         _load?.Cancel();
         _closed.Dispose();
