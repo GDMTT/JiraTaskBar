@@ -346,7 +346,7 @@ public sealed class AppController : IDisposable
         Log.Info($"Worklog {session.Key} {session.Duration} -> {result.Outcome} {result.Error}");
         Bar.PendingWorklogs = Worklogs.PendingCount;
         if (result.Outcome == WorklogOutcome.Posted)
-            RefreshWorklogCalendars(session.Key);
+            RefreshWorklogCalendars();
         if (result.IsAuthFailure)
         {
             ReportAuthFailure();
@@ -359,16 +359,15 @@ public sealed class AppController : IDisposable
         }
     }
 
-    private void RefreshWorklogCalendars(string? issueKey = null)
+    private void RefreshWorklogCalendars()
     {
         if (!_app.Dispatcher.CheckAccess())
         {
-            _ = _app.Dispatcher.InvokeAsync(() => RefreshWorklogCalendars(issueKey));
+            _ = _app.Dispatcher.InvokeAsync(RefreshWorklogCalendars);
             return;
         }
 
-        if (_worklogWindow is { } window &&
-            (issueKey is null || window.IssueKey.Equals(issueKey, StringComparison.OrdinalIgnoreCase)))
+        if (_worklogWindow is { } window)
             _ = window.RefreshAsync();
     }
 
