@@ -474,9 +474,32 @@ public partial class WorklogCalendarWindow
         return block;
     }
 
-    private void Worklog_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private async void Worklog_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (_savingEdit || sender is not Border { Tag: CalendarEntry entry } block || _timeGrid is null) return;
+        if (sender is not Border { Tag: CalendarEntry entry } block || _timeGrid is null) return;
+        e.Handled = true;
+        if (_savingEdit || entry.Pending) return;
+        if (e.ClickCount == 2)
+        {
+            // Pause refresh/focus changes for the whole modal edit, just as for a drag.
+            _savingEdit = true;
+            try
+            {
+                var dialog = new EditWorklogWindow(entry.IssueKey, entry.Started, entry.Seconds, entry.Comment)
+                {
+                    Owner = this,
+                };
+                if (dialog.ShowDialog() == true &&
+                    (dialog.Started != entry.Started || dialog.Seconds != entry.Seconds))
+                    await SaveCalendarEditAsync(entry, dialog.Started, dialog.Seconds);
+            }
+            finally
+            {
+                _savingEdit = false;
+                FinishCalendarEdit();
+            }
+            return;
+        }
         var resize = e.GetPosition(block).Y >= Math.Max(0, block.ActualHeight - 12);
         var row = Grid.GetRow(block);
         var span = Grid.GetRowSpan(block);
@@ -524,7 +547,7 @@ public partial class WorklogCalendarWindow
         if (day == edit.OriginalDay && slot == edit.OriginalSlot && span == edit.OriginalSpan)
         {
             StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
-            RenderScheduler();
+            // Keep the block alive between clicks so WPF can recognize a double-click.
             FinishCalendarEdit();
             return;
         }
