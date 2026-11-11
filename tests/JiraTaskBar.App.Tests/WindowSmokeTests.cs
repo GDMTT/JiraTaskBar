@@ -1,8 +1,10 @@
 using System.IO;
 using System.Runtime.ExceptionServices;
+using System.Reflection;
 using System.Windows;
-using System.Windows.Interop;
 using System.Windows.Controls;
+using System.Windows.Interop;
+using System.Windows.Threading;
 using JiraTaskBar.App.Interop;
 using JiraTaskBar.App.Services;
 using JiraTaskBar.App.ViewModels;
@@ -136,10 +138,16 @@ public class WindowSmokeTests
             contextReport.UpdateLayout();
             contextReport.Close();
 
-            var worklogCalendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => []);
-            worklogCalendar.Show();
-            worklogCalendar.UpdateLayout();
-            worklogCalendar.Close();
+            foreach (var resolution in WorklogCalendarLayout.SupportedResolutions)
+            {
+                var worklogCalendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => [],
+                    resolutionMinutes: resolution);
+                worklogCalendar.Show();
+                worklogCalendar.UpdateLayout();
+                VerifyCurrentTimeIndicator(worklogCalendar, resolution);
+                worklogCalendar.Close();
+                Assert.False(CalendarField<DispatcherTimer>(worklogCalendar, "_currentTimeTimer").IsEnabled);
+            }
             AssertCalendarWorklogsStayInDayColumns(issue);
 
             var addWorklog = new AddWorklogWindow([issue], issue, DateTimeOffset.Now,
@@ -218,6 +226,61 @@ public class WindowSmokeTests
             }
         }
         finally { calendar.Close(); }
+    }
+
+    private static T CalendarField<T>(WorklogCalendarWindow window, string name) =>
+        (T)typeof(WorklogCalendarWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(window)!;
+
+    private static void VerifyCurrentTimeIndicator(WorklogCalendarWindow window, int resolution)
+    {
+        var update = typeof(WorklogCalendarWindow).GetMethod("UpdateCurrentTime",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        void SetTime(DateTime time) => update.Invoke(window, [time]);
+
+        Assert.True(CalendarField<DispatcherTimer>(window, "_currentTimeTimer").IsEnabled);
+        var range = CalendarField<WorklogCalendarRange>(window, "_timeRange");
+        var line = CalendarField<Border>(window, "_currentTimeLine");
+        var now = range.Start.AddDays(2).ToDateTime(new TimeOnly(10, 17, 30));
+        SetTime(now);
+        Assert.Equal(Visibility.Visible, line.Visibility);
+        Assert.Equal(3, Grid.GetColumn(line));
+        Assert.Equal(1, Grid.GetRow(line));
+        Assert.Equal(24 * 60 / resolution, Grid.GetRowSpan(line));
+        Assert.Equal(now.TimeOfDay.TotalMinutes / resolution * Math.Max(8, resolution * 1.2),
+            line.Margin.Top, 6);
+        Assert.Equal(2, line.Height);
+        Assert.False(line.IsHitTestVisible);
+        Assert.True(Panel.GetZIndex(line) > 2); // Above saved worklogs.
+
+        SetTime(now.AddMinutes(1));
+        Assert.True(line.Margin.Top > now.TimeOfDay.TotalMinutes / resolution * Math.Max(8, resolution * 1.2));
+        SetTime(now.Date.AddDays(1)); // Midnight moves the line to the next day.
+        Assert.Equal(4, Grid.GetColumn(line));
+        Assert.Equal(0, line.Margin.Top);
+        SetTime(range.Start.AddDays(-1).ToDateTime(TimeOnly.MinValue));
+        Assert.Equal(Visibility.Collapsed, line.Visibility);
+        SetTime(range.EndExclusive.ToDateTime(TimeOnly.MinValue));
+        Assert.Equal(Visibility.Collapsed, line.Visibility);
+
+        var viewMode = (ComboBox)window.FindName("ViewModeBox");
+        viewMode.SelectedIndex = (int)WorklogCalendarView.Day;
+        range = CalendarField<WorklogCalendarRange>(window, "_timeRange");
+        line = CalendarField<Border>(window, "_currentTimeLine");
+        SetTime(range.Start.ToDateTime(new TimeOnly(23, 59)));
+        Assert.Equal(Visibility.Visible, line.Visibility);
+        Assert.Equal(1, Grid.GetColumn(line));
+        SetTime(range.EndExclusive.ToDateTime(TimeOnly.MinValue));
+        Assert.Equal(Visibility.Collapsed, line.Visibility);
+
+        viewMode.SelectedIndex = (int)WorklogCalendarView.Month;
+        Assert.Null(CalendarField<Border?>(window, "_currentTimeLine"));
+        SetTime(now); // Timer ticks are harmless in Month view.
+        viewMode.SelectedIndex = (int)WorklogCalendarView.Week;
+        line = CalendarField<Border>(window, "_currentTimeLine");
+        SetTime(now);
+        Assert.Equal(Visibility.Visible, line.Visibility);
+        Assert.Equal(3, Grid.GetColumn(line));
     }
 
     private static void RunOnSta(Action action)
