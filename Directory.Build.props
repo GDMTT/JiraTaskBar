@@ -1,6 +1,9 @@
 <Project>
   <!-- Supply-chain settings for every project (see docs/THREAT_MODEL.md, E2). -->
   <PropertyGroup>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <Copyright>Copyright © 2026 GDMTT</Copyright>
+
     <!-- Pin exact package versions + hashes in packages.lock.json; CI builds refuse to drift. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
