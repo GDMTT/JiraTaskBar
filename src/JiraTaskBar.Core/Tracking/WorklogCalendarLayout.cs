@@ -85,11 +85,20 @@ public static class WorklogCalendarLayout
         IReadOnlyList<(int StartSlot, int EndSlot)> intervals)
     {
         if (intervals.Count == 0) return [];
+        var result = new (int Lane, int LaneCount)[intervals.Count];
+        var group = new List<(int Index, int Lane)>();
         var laneEnds = new List<int>();
-        var lanes = new int[intervals.Count];
+        var groupEnd = int.MinValue;
+        void FinishGroup()
+        {
+            foreach (var item in group) result[item.Index] = (item.Lane, laneEnds.Count);
+            group.Clear();
+            laneEnds.Clear();
+        }
         foreach (var item in intervals.Select((value, index) => (value, index))
                      .OrderBy(x => x.value.StartSlot).ThenBy(x => x.value.EndSlot))
         {
+            if (item.value.StartSlot >= groupEnd) FinishGroup();
             var lane = laneEnds.FindIndex(end => end <= item.value.StartSlot);
             if (lane < 0)
             {
@@ -97,9 +106,11 @@ public static class WorklogCalendarLayout
                 laneEnds.Add(item.value.EndSlot);
             }
             else laneEnds[lane] = item.value.EndSlot;
-            lanes[item.index] = lane;
+            group.Add((item.index, lane));
+            groupEnd = Math.Max(groupEnd, item.value.EndSlot);
         }
-        return lanes.Select(lane => (lane, laneEnds.Count)).ToList();
+        FinishGroup();
+        return result;
     }
 
     /// <summary>Resolves a local calendar time, choosing the earliest instant if it repeats.</summary>

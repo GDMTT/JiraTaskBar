@@ -10,7 +10,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <ui:TitleBar Title="Add worklog" ShowMaximize="False" ShowMinimize="False" />
+        <ui:TitleBar x:Name="DialogTitle" Title="Add worklog" ShowMaximize="False" ShowMinimize="False" />
         <Grid Grid.Row="1" Margin="22,12,22,20">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="145" />
