@@ -21,21 +21,19 @@ public sealed partial class TicketViewModel : ObservableObject
     private readonly Action<TicketViewModel> _open;
     private readonly Action<TicketViewModel> _comment;
     private readonly Action<TicketViewModel> _calendar;
-    private readonly Action<TicketViewModel> _askRovo;
     private readonly Func<bool> _showTitles;
     private readonly Func<bool> _canComment;
 
     /// <param name="showTitles">Whether the summary appears on the button (it is always in the tooltip).</param>
     public TicketViewModel(JiraIssue issue, Action<TicketViewModel> toggle, Action<TicketViewModel> open,
         Action<TicketViewModel> comment, Func<bool>? showTitles = null, Func<bool>? canComment = null,
-        Action<TicketViewModel>? calendar = null, Action<TicketViewModel>? askRovo = null)
+        Action<TicketViewModel>? calendar = null)
     {
         _issue = issue;
         _toggle = toggle;
         _open = open;
         _comment = comment;
         _calendar = calendar ?? (_ => { });
-        _askRovo = askRovo ?? (_ => { });
         _showTitles = showTitles ?? (() => true);
         _canComment = canComment ?? (() => true);
     }
@@ -109,16 +107,12 @@ public sealed partial class TicketViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanComment))]
     private void Calendar() => _calendar(this);
 
-    [RelayCommand(CanExecute = nameof(CanComment))]
-    private void AskRovo() => _askRovo(this);
-
     private bool CanComment() => _canComment();
 
     public void RefreshConnectionState()
     {
         CommentCommand.NotifyCanExecuteChanged();
         CalendarCommand.NotifyCanExecuteChanged();
-        AskRovoCommand.NotifyCanExecuteChanged();
     }
 
     private static Brush Frozen(byte r, byte g, byte b)
