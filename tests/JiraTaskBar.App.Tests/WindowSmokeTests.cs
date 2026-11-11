@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Input;
 using System.Windows.Threading;
 using JiraTaskBar.App.Interop;
 using JiraTaskBar.App.Services;
@@ -180,6 +181,7 @@ public class WindowSmokeTests
             typeof(AppController).GetProperty(nameof(AppController.IsExiting))!.SetValue(controller, true);
             bar.Close();
             controller.Dispose();
+            AssertCalendarClickEditsSavedWorklog(issue);
             app.Shutdown();
         });
     }
@@ -209,21 +211,129 @@ public class WindowSmokeTests
                     var grid = Assert.IsType<Grid>(scroll.Content);
                     var overlay = Assert.Single(grid.Children.OfType<Grid>());
                     var days = grid.ColumnDefinitions.Count - 1;
-                    var lanes = overlay.ColumnDefinitions.Count / days;
+                    Assert.Equal(days, overlay.ColumnDefinitions.Count);
                     Assert.True(grid.ActualWidth <= scroll.ViewportWidth + 0.1,
                         "Long worklog text must not expand the calendar beyond the viewport.");
                     Assert.NotEmpty(overlay.Children.Cast<UIElement>());
-                    foreach (var block in overlay.Children.OfType<Border>())
+                    foreach (var entryHost in overlay.Children.OfType<Grid>())
                     {
-                        var day = Grid.GetColumn(block) / lanes;
+                        var block = Assert.Single(entryHost.Children.OfType<Border>());
+                        var day = Grid.GetColumn(entryHost);
                         var column = grid.ColumnDefinitions[day + 1];
                         var left = block.TranslatePoint(new Point(0, 0), grid).X;
                         Assert.True(left >= column.Offset - 0.1 && left + block.ActualWidth <= column.Offset + column.ActualWidth + 0.1,
                             $"Worklog bounds {left}–{left + block.ActualWidth} exceed day {day} bounds " +
                             $"{column.Offset}–{column.Offset + column.ActualWidth} at width {width} in mode {mode}.");
+                        Assert.InRange(block.ActualWidth, column.ActualWidth / entryHost.ColumnDefinitions.Count - 5,
+                            column.ActualWidth / entryHost.ColumnDefinitions.Count - 3);
                     }
+                    scroll.ScrollToVerticalOffset(543);
+                    calendar.UpdateLayout();
+                    var offset = scroll.VerticalOffset;
+                    typeof(WorklogCalendarWindow).GetMethod("RenderScheduler", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(calendar, [false]);
+                    calendar.UpdateLayout();
+                    var replacement = CalendarField<ScrollViewer>(calendar, "_timeScroll");
+                    Assert.Equal(offset, replacement.VerticalOffset, 1);
                 }
             }
+        }
+        finally { calendar.Close(); }
+    }
+
+    private static void AssertCalendarClickEditsSavedWorklog(JiraIssue issue)
+    {
+        var started = new DateTimeOffset(DateTime.Today.AddHours(9));
+        var original = new JiraWorklog("123", issue.Key, started, 60, "Tester", "Original description");
+        var client = new NullJiraClient { Worklogs = [original] };
+        var calendar = new WorklogCalendarWindow(issue, client, () => [], resolutionMinutes: 5);
+        try
+        {
+            calendar.Show();
+            calendar.RefreshAsync().GetAwaiter().GetResult();
+            calendar.UpdateLayout();
+            var scroll = CalendarField<ScrollViewer>(calendar, "_timeScroll");
+            scroll.ScrollToVerticalOffset(1500);
+            calendar.UpdateLayout();
+            var offset = scroll.VerticalOffset;
+            var grid = CalendarField<Grid>(calendar, "_timeGrid");
+            // Every resolution boundary has a label, including the five-minute divisions.
+            Assert.Equal(288, grid.Children.OfType<TextBlock>().Count());
+            var overlay = Assert.Single(grid.Children.OfType<Grid>());
+            var host = Assert.Single(overlay.Children.OfType<Grid>());
+            var block = Assert.Single(host.Children.OfType<Border>());
+            Assert.True(block.ClipToBounds);
+            var hit = grid.InputHitTest(block.TranslatePoint(new Point(block.ActualWidth / 2, 3), grid));
+            Assert.NotNull(hit);
+            var visual = hit as DependencyObject;
+            while (visual is not null && visual != block)
+                visual = System.Windows.Media.VisualTreeHelper.GetParent(visual);
+            Assert.Same(block, visual);
+
+            Exception? dialogError = null;
+            calendar.Dispatcher.BeginInvoke(() =>
+            {
+                var editor = calendar.OwnedWindows.OfType<AddWorklogWindow>().Single();
+                try
+                {
+                    Assert.Equal("Edit worklog", editor.Title);
+                    Assert.False(((ComboBox)editor.FindName("TicketBox")).IsEnabled);
+                    Assert.True(((ComboBox)editor.FindName("DescriptionTargetBox")).IsEnabled);
+                    Assert.Equal("Original description", ((TextBox)editor.FindName("DescriptionBox")).Text);
+                    ((TextBox)editor.FindName("DurationBox")).Text = "0:10";
+                    ((ComboBox)editor.FindName("DescriptionTargetBox")).SelectedIndex = 1;
+                    ((TextBox)editor.FindName("DescriptionBox")).Text = "Internal progress update";
+                    typeof(AddWorklogWindow).GetMethod("Save_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(editor, [editor, new RoutedEventArgs()]);
+                    Assert.True(editor.WorklogSaved);
+                }
+                catch (Exception ex) { dialogError = ex; }
+                finally { editor.Close(); }
+            }, DispatcherPriority.Background);
+            block.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+                { RoutedEvent = UIElement.PreviewMouseLeftButtonDownEvent });
+            block.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+                { RoutedEvent = UIElement.PreviewMouseLeftButtonUpEvent });
+            if (dialogError is not null) ExceptionDispatchInfo.Capture(dialogError).Throw();
+            Assert.NotNull(client.UpdatedWorklog);
+            Assert.Equal("123", client.UpdatedWorklog.Id);
+            Assert.Equal(600, client.UpdatedSeconds);
+            Assert.Equal(original.Comment, client.Worklogs!.Single().Comment);
+            Assert.Equal(original.CommentDocument, client.Worklogs!.Single().CommentDocument);
+            Assert.Equal((issue.Key, "Internal progress update", true), client.AddedComment);
+            calendar.UpdateLayout();
+            Assert.Equal(offset, CalendarField<ScrollViewer>(calendar, "_timeScroll").VerticalOffset, 1);
+
+            // Moves and duration changes use the same save path and retain the viewport too.
+            foreach (var moved in new[] { true, false })
+            {
+                grid = CalendarField<Grid>(calendar, "_timeGrid");
+                overlay = Assert.Single(grid.Children.OfType<Grid>());
+                block = Assert.Single(Assert.Single(overlay.Children.OfType<Grid>()).Children.OfType<Border>());
+                var current = client.Worklogs!.Single();
+                var save = (Task)typeof(WorklogCalendarWindow).GetMethod("SaveCalendarEditAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(calendar,
+                    [block.Tag, moved ? current.Started.AddHours(1) : current.Started,
+                        moved ? current.TimeSpentSeconds : 1200])!;
+                save.GetAwaiter().GetResult();
+                calendar.UpdateLayout();
+                Assert.Equal(offset, CalendarField<ScrollViewer>(calendar, "_timeScroll").VerticalOffset, 1);
+                Assert.Equal(moved ? 600 : 1200, client.Worklogs!.Single().TimeSpentSeconds);
+            }
+
+            // A concurrent server edit must leave the editor open and avoid another PUT.
+            client.Worklogs = [original with { TimeSpentSeconds = 120 }];
+            client.UpdatedWorklog = null;
+            var conflict = new AddWorklogWindow([issue], issue, started, TimeSpan.FromMinutes(1), client, original);
+            try
+            {
+                typeof(AddWorklogWindow).GetMethod("Save_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(conflict, [conflict, new RoutedEventArgs()]);
+                Assert.False(conflict.WorklogSaved);
+                Assert.Null(client.UpdatedWorklog);
+                Assert.Contains("changed in Jira", ((Wpf.Ui.Controls.InfoBar)conflict.FindName("Status")).Message);
+            }
+            finally { conflict.Close(); }
         }
         finally { calendar.Close(); }
     }
@@ -247,14 +357,14 @@ public class WindowSmokeTests
         Assert.Equal(3, Grid.GetColumn(line));
         Assert.Equal(1, Grid.GetRow(line));
         Assert.Equal(24 * 60 / resolution, Grid.GetRowSpan(line));
-        Assert.Equal(now.TimeOfDay.TotalMinutes / resolution * Math.Max(8, resolution * 1.2),
+        Assert.Equal(now.TimeOfDay.TotalMinutes / resolution * Math.Max(16, resolution * 1.2),
             line.Margin.Top, 6);
         Assert.Equal(2, line.Height);
         Assert.False(line.IsHitTestVisible);
         Assert.True(Panel.GetZIndex(line) > 2); // Above saved worklogs.
 
         SetTime(now.AddMinutes(1));
-        Assert.True(line.Margin.Top > now.TimeOfDay.TotalMinutes / resolution * Math.Max(8, resolution * 1.2));
+        Assert.True(line.Margin.Top > now.TimeOfDay.TotalMinutes / resolution * Math.Max(16, resolution * 1.2));
         SetTime(now.Date.AddDays(1)); // Midnight moves the line to the next day.
         Assert.Equal(4, Grid.GetColumn(line));
         Assert.Equal(0, line.Margin.Top);
@@ -299,16 +409,32 @@ public class WindowSmokeTests
 
     private sealed class NullJiraClient : IJiraClient
     {
+        public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }
+        public JiraWorklog? UpdatedWorklog { get; set; }
+        public int UpdatedSeconds { get; private set; }
+        public (string IssueKey, string Text, bool Internal)? AddedComment { get; private set; }
         public JiraConnection Connection { get; } = new(new Uri("https://example.atlassian.net/"), "a@b.c", "t");
         public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
             Task.FromResult(JiraDurationSettings.Default);
         public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) =>
+            Worklogs is null ? throw new NotSupportedException() : Task.FromResult(Worklogs);
         public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default)
+        {
+            UpdatedWorklog = worklog;
+            UpdatedSeconds = timeSpentSeconds;
+            Worklogs = Worklogs?.Select(w => w.Id == worklog.Id ? worklog with
+                { Started = startedLocal, TimeSpentSeconds = timeSpentSeconds } : w).ToList();
+            return Task.CompletedTask;
+        }
+        public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default)
+        {
+            AddedComment = (issueKey, wikiMarkup, isInternal);
+            return Task.CompletedTask;
+        }
         public Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<byte[]?> GetIssueTypeIconAsync(string avatarId, CancellationToken ct = default) => throw new NotSupportedException();
     }

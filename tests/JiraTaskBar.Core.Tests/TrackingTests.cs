@@ -337,7 +337,18 @@ public class WorklogCalendarLayoutTests
 
         Assert.NotEqual(lanes[0].Lane, lanes[1].Lane);
         Assert.Equal(2, lanes[0].LaneCount);
-        Assert.Equal(2, lanes[2].LaneCount);
+        Assert.Equal(1, lanes[2].LaneCount);
+    }
+
+    [Fact]
+    public void Overlap_groups_have_independent_widths_even_when_input_is_unsorted()
+    {
+        var lanes = WorklogCalendarLayout.AssignOverlapLanes([(30, 31), (10, 13), (12, 15), (14, 16), (0, 1)]);
+        Assert.Equal((0, 1), lanes[0]);
+        Assert.Equal((0, 1), lanes[4]);
+        Assert.All(lanes.Skip(1).Take(3), lane => Assert.Equal(2, lane.LaneCount));
+        Assert.NotEqual(lanes[1].Lane, lanes[2].Lane);
+        Assert.NotEqual(lanes[2].Lane, lanes[3].Lane);
     }
 
     private static TimeZoneInfo DstZone()

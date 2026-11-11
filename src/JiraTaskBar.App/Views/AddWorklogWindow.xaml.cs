@@ -10,14 +10,16 @@ namespace JiraTaskBar.App.Views;
 public partial class AddWorklogWindow
 {
     private readonly IJiraClient _client;
+    private readonly JiraWorklog? _original;
     private bool _worklogSaved;
     private bool _saving;
 
     public AddWorklogWindow(IReadOnlyList<JiraIssue> issues, JiraIssue selected,
-        DateTimeOffset started, TimeSpan duration, IJiraClient client)
+        DateTimeOffset started, TimeSpan duration, IJiraClient client, JiraWorklog? original = null)
     {
         InitializeComponent();
         _client = client;
+        _original = original;
         var choices = issues
             .Append(selected)
             .DistinctBy(i => i.Key, StringComparer.OrdinalIgnoreCase)
@@ -31,6 +33,12 @@ public partial class AddWorklogWindow
         StartTimeBox.Text = started.LocalDateTime.ToString("t", CultureInfo.CurrentCulture);
         DurationBox.Text = $"{(int)duration.TotalHours}:{duration.Minutes:00}";
         DescriptionTargetBox.SelectedIndex = 0;
+        if (original is not null)
+        {
+            Title = DialogTitle.Title = "Edit worklog";
+            TicketBox.IsEnabled = false;
+            DescriptionBox.Text = original.Comment ?? string.Empty;
+        }
     }
 
     public bool WorklogSaved => _worklogSaved;
@@ -48,8 +56,24 @@ public partial class AddWorklogWindow
         var asTicketComment = DescriptionTargetBox.SelectedIndex == 1;
         try
         {
-            await _client.AddWorklogAsync(issue.Key, started, seconds,
-                asTicketComment || description.Length == 0 ? null : description);
+            if (_original is { } original)
+            {
+                var latest = (await _client.GetWorklogsAsync(issue.Key)).FirstOrDefault(w => w.Id == original.Id);
+                if (latest is null || latest.Started != original.Started ||
+                    latest.TimeSpentSeconds != original.TimeSpentSeconds || latest.Comment != original.Comment ||
+                    !System.Text.Json.Nodes.JsonNode.DeepEquals(latest.CommentDocument, original.CommentDocument))
+                {
+                    Invalid("This worklog changed in Jira. Close the editor and refresh before editing it again.");
+                    SaveButton.IsEnabled = CancelButton.IsEnabled = true;
+                    return;
+                }
+                var changedDescription = !asTicketComment && description != (original.Comment ?? string.Empty).Trim();
+                await _client.UpdateWorklogAsync(issue.Key, changedDescription
+                    ? latest with { Comment = description, CommentDocument = null } : latest, started, seconds);
+            }
+            else
+                await _client.AddWorklogAsync(issue.Key, started, seconds,
+                    asTicketComment || description.Length == 0 ? null : description);
             _worklogSaved = true;
             SavedIssue = issue;
 
@@ -100,6 +124,17 @@ public partial class AddWorklogWindow
         started = WorklogCalendarLayout.LocalDateTime(
             DateOnly.FromDateTime(date), time, TimeZoneInfo.Local);
         seconds = (int)Math.Round(duration.TotalSeconds);
+        if (_original is { } original)
+        {
+            // Keep sub-minute precision when a field was only viewed, not edited.
+            var originalLocal = original.Started.LocalDateTime;
+            if (date.Date == originalLocal.Date &&
+                StartTimeBox.Text == originalLocal.ToString("t", CultureInfo.CurrentCulture))
+                started = original.Started;
+            var originalDuration = TimeSpan.FromSeconds(original.TimeSpentSeconds);
+            if (DurationBox.Text == $"{(int)originalDuration.TotalHours}:{originalDuration.Minutes:00}")
+                seconds = original.TimeSpentSeconds;
+        }
         return true;
     }
 

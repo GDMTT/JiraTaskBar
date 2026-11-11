@@ -14,6 +14,9 @@ namespace JiraTaskBar.App.Views;
 public partial class WorklogCalendarWindow
 {
     private static readonly Brush GridLine = MakeBrush(0x28, 0x80, 0x80, 0x80);
+    private static readonly Brush HourLine = MakeBrush(0xB0, 0x80, 0x80, 0x80);
+    private static readonly Brush HalfHourLine = MakeBrush(0x80, 0x80, 0x80, 0x80);
+    private static readonly Brush ResolutionLine = MakeBrush(0x45, 0x80, 0x80, 0x80);
     private static readonly Brush TodayFill = MakeBrush(0x24, 0xFF, 0xCC, 0x33);
     private static readonly Brush WeekendFill = MakeBrush(0x16, 0x80, 0x80, 0x80);
     private static readonly Brush FocusedSavedFill = MakeBrush(0xE8, 0x36, 0x5C, 0xE8);
@@ -36,6 +39,7 @@ public partial class WorklogCalendarWindow
     private IReadOnlyList<JiraWorklog> _worklogs = [];
     private HashSet<string> _visibleIssueKeys = new(StringComparer.OrdinalIgnoreCase);
     private ScrollViewer? _timeScroll;
+    private double _verticalOffset;
     private Grid? _timeGrid;
     private WorklogCalendarRange? _timeRange;
     private double _slotHeight;
@@ -45,7 +49,6 @@ public partial class WorklogCalendarWindow
     private bool _savingEdit;
     private bool _refreshPending;
     private JiraIssue? _pendingFocusIssue;
-    private int _overlayLaneCount = 1;
 
     public WorklogCalendarWindow(JiraIssue issue, IJiraClient client,
         Func<IReadOnlyList<PendingWorklog>> pending, Func<IReadOnlyList<JiraIssue>>? issues = null,
@@ -196,6 +199,8 @@ public partial class WorklogCalendarWindow
             .ToList();
         RangeTotal.Text = $"Total: {FormatDuration(entries.Sum(e => e.Seconds))}";
 
+        if (resetScroll)
+            _verticalOffset = 8 * 60 / _resolutionMinutes * Math.Max(16, _resolutionMinutes * 1.2);
         SchedulerHost.Children.Clear();
         _timeScroll = null;
         _timeGrid = null;
@@ -204,7 +209,7 @@ public partial class WorklogCalendarWindow
         if (_view == WorklogCalendarView.Month)
             RenderMonth(range, entries);
         else
-            RenderTimeGrid(range, entries, resetScroll);
+            RenderTimeGrid(range, entries);
     }
 
     private void RenderMonth(WorklogCalendarRange range, IReadOnlyList<CalendarEntry> entries)
@@ -302,11 +307,11 @@ public partial class WorklogCalendarWindow
         }
     }
 
-    private void RenderTimeGrid(WorklogCalendarRange range, IReadOnlyList<CalendarEntry> entries, bool resetScroll)
+    private void RenderTimeGrid(WorklogCalendarRange range, IReadOnlyList<CalendarEntry> entries)
     {
         var days = range.DayCount;
         var slots = 24 * 60 / _resolutionMinutes;
-        var slotHeight = Math.Max(8, _resolutionMinutes * 1.2);
+        var slotHeight = Math.Max(16, _resolutionMinutes * 1.2);
         var grid = new Grid { MinWidth = 680, AllowDrop = true };
         _timeGrid = grid;
         _timeRange = range;
@@ -348,26 +353,31 @@ public partial class WorklogCalendarWindow
         for (var slot = 0; slot < slots; slot++)
         {
             var minute = slot * _resolutionMinutes;
-            if (minute % 60 == 0)
+            var label = new TextBlock
             {
-                var label = new TextBlock
-                {
-                    Text = DateTime.Today.AddMinutes(minute).ToString("t", CultureInfo.CurrentCulture),
-                    FontSize = 11,
-                    Opacity = 0.7,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    Margin = new Thickness(0, -7, 6, 0),
-                };
-                Grid.SetRow(label, slot + 1);
-                grid.Children.Add(label);
-            }
+                Text = DateTime.Today.AddMinutes(minute).ToString("t", CultureInfo.CurrentCulture),
+                FontSize = 10,
+                Opacity = minute % 60 == 0 ? 0.85 : 0.6,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, -7, 6, 0),
+            };
+            Grid.SetRow(label, slot + 1);
+            grid.Children.Add(label);
             for (var day = 0; day < days; day++)
             {
                 var cell = new Border
                 {
                     BorderBrush = GridLine,
-                    BorderThickness = new Thickness(0.5, minute % 60 == 0 ? 0.7 : 0.25, 0.5, 0.25),
+                    BorderThickness = new Thickness(0.5, 0, 0.5, 0),
+                    Child = new Border
+                    {
+                        BorderBrush = minute % 60 == 0 ? HourLine :
+                            minute % 30 == 0 ? HalfHourLine : ResolutionLine,
+                        BorderThickness = new Thickness(0, minute % 60 == 0 ? 2 : 1, 0, 0),
+                        IsHitTestVisible = false,
+                        SnapsToDevicePixels = true,
+                    },
                     Background = range.Start.AddDays(day) == DateOnly.FromDateTime(DateTime.Today)
                         ? TodayFill : Brushes.Transparent,
                 };
@@ -393,10 +403,8 @@ public partial class WorklogCalendarWindow
             renderedDays.Add((dayEntries, lanes));
         }
 
-        _overlayLaneCount = Math.Max(1, renderedDays
-            .SelectMany(day => day.Lanes).Select(lane => lane.LaneCount).DefaultIfEmpty(1).Max());
         var overlay = new Grid();
-        for (var column = 0; column < days * _overlayLaneCount; column++)
+        for (var column = 0; column < days; column++)
             overlay.ColumnDefinitions.Add(new ColumnDefinition());
         for (var slot = 0; slot < slots; slot++)
             overlay.RowDefinitions.Add(new RowDefinition { Height = new GridLength(slotHeight) });
@@ -414,10 +422,16 @@ public partial class WorklogCalendarWindow
             {
                 var rendered = renderedDay.Entries[index];
                 var block = WorklogBlock(rendered.Entry);
-                Grid.SetColumn(block, day * _overlayLaneCount + renderedDay.Lanes[index].Lane);
-                Grid.SetRow(block, rendered.StartSlot);
-                Grid.SetRowSpan(block, rendered.Span);
-                overlay.Children.Add(block);
+                var lane = renderedDay.Lanes[index];
+                var host = new Grid();
+                for (var column = 0; column < lane.LaneCount; column++)
+                    host.ColumnDefinitions.Add(new ColumnDefinition());
+                Grid.SetColumn(block, lane.Lane);
+                host.Children.Add(block);
+                Grid.SetColumn(host, day);
+                Grid.SetRow(host, rendered.StartSlot);
+                Grid.SetRowSpan(host, rendered.Span);
+                overlay.Children.Add(host);
             }
         }
 
@@ -444,10 +458,19 @@ public partial class WorklogCalendarWindow
             // different contents and misaligning worklog lanes with day columns.
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         };
-        SchedulerHost.Children.Add(_timeScroll);
-        if (resetScroll)
-            Dispatcher.BeginInvoke(() => _timeScroll?.ScrollToVerticalOffset(8 * 60 / _resolutionMinutes * slotHeight),
-                DispatcherPriority.Loaded);
+        var scroll = _timeScroll;
+        scroll.ScrollChanged += (_, e) =>
+        {
+            if (_timeScroll != scroll) return;
+            // A replacement content tree may not have completed layout before the next
+            // refresh. Retain the requested offset until the new extent is measured.
+            if (e.ExtentHeightChange != 0 || e.ViewportHeightChange != 0)
+                scroll.ScrollToVerticalOffset(_verticalOffset);
+            else
+                _verticalOffset = e.VerticalOffset;
+        };
+        SchedulerHost.Children.Add(scroll);
+        scroll.ScrollToVerticalOffset(_verticalOffset);
     }
 
     private void UpdateCurrentTime(DateTime now)
@@ -499,12 +522,13 @@ public partial class WorklogCalendarWindow
         {
             Margin = new Thickness(2, 1, 2, 1),
             CornerRadius = new CornerRadius(4),
+            ClipToBounds = true,
             Background = entry.Pending ? PendingFill : IsFocusedIssue(entry.IssueKey) ? FocusedSavedFill : OtherSavedFill,
             BorderBrush = entry.Pending ? Brushes.DarkOrange :
                 IsFocusedIssue(entry.IssueKey) ? Brushes.DodgerBlue : Brushes.DimGray,
             BorderThickness = new Thickness(IsFocusedIssue(entry.IssueKey) ? 2 : 1),
             ToolTip = EntryTooltip(entry) + (entry.Pending ? "\nPending worklogs cannot be moved until Jira accepts them." :
-                "\nDrag to move; drag the bottom edge to change duration."),
+                "\nClick to edit; drag to move; drag the bottom edge to change duration."),
             Child = content,
             Tag = entry,
             Cursor = entry.Pending ? Cursors.Arrow : Cursors.SizeAll,
@@ -524,13 +548,14 @@ public partial class WorklogCalendarWindow
     private void Worklog_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (_savingEdit || sender is not Border { Tag: CalendarEntry entry } block || _timeGrid is null) return;
-        var resize = e.GetPosition(block).Y >= Math.Max(0, block.ActualHeight - 12);
-        var row = Grid.GetRow(block);
-        var span = Grid.GetRowSpan(block);
+        var resize = e.GetPosition(block).Y >= Math.Max(0, block.ActualHeight - 5);
+        var row = Grid.GetRow((Grid)block.Parent);
+        var span = Grid.GetRowSpan((Grid)block.Parent);
         var pointer = TimeSlotAt(_timeGrid, e.GetPosition(_timeGrid));
         _calendarEdit = new CalendarEdit(entry, resize ? EditMode.Resize : EditMode.Move, block,
             entry.Date.DayNumber - _timeRange!.Start.DayNumber, row, span,
-            pointer is null ? 0 : Math.Clamp(pointer.Slot - row, 0, Math.Max(0, span - 1)));
+            pointer is null ? 0 : Math.Clamp(pointer.Slot - row, 0, Math.Max(0, span - 1)),
+            e.GetPosition(_timeGrid));
         block.CaptureMouse();
         StatusText.Text = resize ? "Drag the bottom edge to change duration…" : "Drag the worklog to a new time or day…";
         e.Handled = true;
@@ -540,6 +565,11 @@ public partial class WorklogCalendarWindow
     {
         if (_calendarEdit is not { } edit || sender != edit.Block || e.LeftButton != MouseButtonState.Pressed ||
             _timeGrid is null || TimeSlotAt(_timeGrid, e.GetPosition(_timeGrid)) is not { } slot) return;
+        var position = e.GetPosition(_timeGrid);
+        if (!edit.Dragged && Math.Abs(position.X - edit.PointerStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(position.Y - edit.PointerStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        edit.Dragged = true;
+        var host = (Grid)edit.Block.Parent;
         var slots = 24 * 60 / _resolutionMinutes;
         if (edit.Mode == EditMode.Move)
         {
@@ -547,15 +577,15 @@ public partial class WorklogCalendarWindow
             var day = slot.Date.DayNumber - _timeRange!.Start.DayNumber;
             if (edit.CurrentDay != day)
             {
-                Grid.SetColumn(edit.Block, day * _overlayLaneCount);
+                Grid.SetColumn(host, day);
                 edit.CurrentDay = day;
             }
-            Grid.SetRow(edit.Block, start);
+            Grid.SetRow(host, start);
         }
         else
         {
             var span = Math.Clamp(slot.Slot - edit.OriginalSlot + 1, 1, slots - edit.OriginalSlot);
-            Grid.SetRowSpan(edit.Block, span);
+            Grid.SetRowSpan(host, span);
         }
         e.Handled = true;
     }
@@ -566,8 +596,15 @@ public partial class WorklogCalendarWindow
         _calendarEdit = null;
         edit.Block.ReleaseMouseCapture();
         var day = edit.CurrentDay;
-        var slot = Grid.GetRow(edit.Block);
-        var span = Grid.GetRowSpan(edit.Block);
+        e.Handled = true;
+        var slot = Grid.GetRow((Grid)edit.Block.Parent);
+        var span = Grid.GetRowSpan((Grid)edit.Block.Parent);
+        if (!edit.Dragged)
+        {
+            await ShowEditWorklogAsync(edit.Entry);
+            FinishCalendarEdit();
+            return;
+        }
         if (day == edit.OriginalDay && slot == edit.OriginalSlot && span == edit.OriginalSpan)
         {
             StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
@@ -764,6 +801,26 @@ public partial class WorklogCalendarWindow
             await RefreshAsync();
     }
 
+    private async Task ShowEditWorklogAsync(CalendarEntry entry)
+    {
+        var worklog = _worklogs.FirstOrDefault(w => w.Id == entry.Id && w.IssueKey == entry.IssueKey);
+        if (worklog is null) return;
+        var issue = _issues().Append(_issue).FirstOrDefault(i => i.Key == entry.IssueKey)
+            ?? new JiraIssue(entry.IssueKey, entry.IssueKey, null, "", "", "");
+        _savingEdit = true;
+        var saved = false;
+        try
+        {
+            var dialog = new AddWorklogWindow([issue], issue, entry.Started,
+                TimeSpan.FromSeconds(entry.Seconds), _client, worklog) { Owner = this };
+            dialog.ShowDialog();
+            saved = dialog.WorklogSaved;
+        }
+        finally { _savingEdit = false; }
+        StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
+        if (saved) await RefreshAsync();
+    }
+
     private string EntryTooltip(CalendarEntry entry) =>
         $"{entry.IssueKey} · {entry.Author}\n{entry.Started:dddd, d MMMM yyyy HH:mm}–{entry.Ended:HH:mm}\n" +
         $"{FormatDuration(entry.Seconds)} · {(entry.Pending ? "Pending locally" : "Saved in Jira")}" +
@@ -850,7 +907,7 @@ public partial class WorklogCalendarWindow
     private enum EditMode { Move, Resize }
 
     private sealed class CalendarEdit(CalendarEntry entry, EditMode mode, Border block,
-        int originalDay, int originalSlot, int originalSpan, int grabOffset)
+        int originalDay, int originalSlot, int originalSpan, int grabOffset, Point pointerStart)
     {
         public CalendarEntry Entry { get; } = entry;
         public EditMode Mode { get; } = mode;
@@ -859,6 +916,8 @@ public partial class WorklogCalendarWindow
         public int OriginalSlot { get; } = originalSlot;
         public int OriginalSpan { get; } = originalSpan;
         public int GrabOffset { get; } = grabOffset;
+        public Point PointerStart { get; } = pointerStart;
+        public bool Dragged { get; set; }
         public int CurrentDay { get; set; } = originalDay;
     }
 
