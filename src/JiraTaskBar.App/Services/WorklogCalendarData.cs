@@ -9,6 +9,12 @@ internal sealed record WorklogCalendarLoadResult(
 
 internal static class WorklogCalendarData
 {
+    public static IReadOnlyList<JiraWorklog> ReplaceIssueWorklogs(IReadOnlyList<JiraWorklog> existing,
+        string issueKey, IReadOnlyList<JiraWorklog> replacement) => existing
+        .Where(worklog => !worklog.IssueKey.Equals(issueKey, StringComparison.OrdinalIgnoreCase))
+        .Concat(replacement)
+        .ToList();
+
     public static async Task<WorklogCalendarLoadResult> LoadAsync(IJiraClient client,
         IReadOnlyList<JiraIssue> issues, JiraIssue selected, CancellationToken ct)
     {

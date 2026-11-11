@@ -41,6 +41,7 @@ public partial class WorklogCalendarWindow
     private Border? _selectionBlock;
     private CalendarEdit? _calendarEdit;
     private bool _savingEdit;
+    private bool _refreshPending;
     private JiraIssue? _pendingFocusIssue;
     private int _overlayLaneCount = 1;
 
@@ -95,7 +96,13 @@ public partial class WorklogCalendarWindow
 
     public async Task<bool> RefreshAsync()
     {
-        if (_isClosed || _calendarEdit is not null || _savingEdit) return false;
+        if (_isClosed) return false;
+        if (_calendarEdit is not null || _savingEdit)
+        {
+            _refreshPending = true;
+            return false;
+        }
+        _refreshPending = false;
         var version = ++_loadVersion;
         var selectedIssue = _issue;
         _load?.Cancel();
@@ -106,8 +113,13 @@ public partial class WorklogCalendarWindow
         try
         {
             var result = await WorklogCalendarData.LoadAsync(_client, _issues(), selectedIssue, load.Token);
-            if (version != _loadVersion || _calendarEdit is not null || _savingEdit ||
-                !_issue.Key.Equals(selectedIssue.Key, StringComparison.OrdinalIgnoreCase)) return false;
+            if (version != _loadVersion || !_issue.Key.Equals(selectedIssue.Key, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (_calendarEdit is not null || _savingEdit)
+            {
+                _refreshPending = true;
+                return false;
+            }
             _worklogs = result.Worklogs;
             _visibleIssueKeys = result.IssueKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded across {result.IssueKeys.Count} ticket(s)" +
@@ -513,7 +525,7 @@ public partial class WorklogCalendarWindow
         {
             StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
             RenderScheduler();
-            ApplyPendingFocus();
+            FinishCalendarEdit();
             return;
         }
 
@@ -535,7 +547,7 @@ public partial class WorklogCalendarWindow
         _calendarEdit = null;
         StatusText.Text = "Edit cancelled.";
         RenderScheduler();
-        ApplyPendingFocus();
+        FinishCalendarEdit();
     }
 
     private async Task SaveCalendarEditAsync(CalendarEntry entry, DateTimeOffset started, int seconds)
@@ -551,7 +563,7 @@ public partial class WorklogCalendarWindow
                 current.TimeSpentSeconds != entry.Seconds || !string.Equals(current.Comment ?? string.Empty,
                     entry.Comment, StringComparison.Ordinal))
             {
-                _worklogs = latest;
+                _worklogs = WorklogCalendarData.ReplaceIssueWorklogs(_worklogs, issueKey, latest);
                 StatusText.Text = "This worklog changed in Jira. The calendar was refreshed without overwriting it.";
                 RenderScheduler();
                 return;
@@ -560,11 +572,9 @@ public partial class WorklogCalendarWindow
             StatusText.Text = "Saving the changed worklog to Jira…";
             await _client.UpdateWorklogAsync(issueKey, current, started, seconds, _closed.Token);
             var updated = current with { Started = started, TimeSpentSeconds = seconds };
-            if (_issue.Key.Equals(issueKey, StringComparison.OrdinalIgnoreCase))
-            {
-                _worklogs = latest.Select(worklog => worklog.Id == updated.Id ? updated : worklog).ToList();
-                RenderScheduler();
-            }
+            var updatedIssue = latest.Select(worklog => worklog.Id == updated.Id ? updated : worklog).ToList();
+            _worklogs = WorklogCalendarData.ReplaceIssueWorklogs(_worklogs, issueKey, updatedIssue);
+            RenderScheduler();
             _savingEdit = false;
             if (ApplyPendingFocus()) return;
             if (await RefreshAsync()) StatusText.Text = "Worklog updated in Jira.";
@@ -581,6 +591,7 @@ public partial class WorklogCalendarWindow
         {
             _savingEdit = false;
             ApplyPendingFocus();
+            if (_refreshPending) _ = RefreshAsync();
         }
     }
 
@@ -740,6 +751,12 @@ public partial class WorklogCalendarWindow
         _pendingFocusIssue = null;
         ApplyFocusIssue(pending);
         return true;
+    }
+
+    private void FinishCalendarEdit()
+    {
+        ApplyPendingFocus();
+        if (_refreshPending) _ = RefreshAsync();
     }
 
     private string RangeLabel(WorklogCalendarRange range) => _view switch

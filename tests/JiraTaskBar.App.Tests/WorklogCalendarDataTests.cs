@@ -34,6 +34,22 @@ public class WorklogCalendarDataTests
         Assert.Equal(1, result.FailedIssueCount);
     }
 
+    [Fact]
+    public void Replacing_one_tickets_history_keeps_other_ticket_worklogs()
+    {
+        var started = DateTimeOffset.Now;
+        JiraWorklog[] existing =
+        [
+            new("1", "ABC-1", started, 600, "Me", null),
+            new("2", "ABC-2", started, 900, "Me", null),
+        ];
+        JiraWorklog[] replacement = [new("3", "ABC-1", started, 1200, "Me", null)];
+
+        var merged = WorklogCalendarData.ReplaceIssueWorklogs(existing, "abc-1", replacement);
+
+        Assert.Equal(["ABC-2:2", "ABC-1:3"], merged.Select(worklog => $"{worklog.IssueKey}:{worklog.Id}"));
+    }
+
     private sealed class CalendarClient : IJiraClient
     {
         public JiraConnection Connection { get; } = new(new Uri("https://example.atlassian.net/"), "me@example.com", "token");
