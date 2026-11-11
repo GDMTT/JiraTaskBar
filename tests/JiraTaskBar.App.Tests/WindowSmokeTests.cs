@@ -2,12 +2,14 @@ using System.IO;
 using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Controls;
 using JiraTaskBar.App.Interop;
 using JiraTaskBar.App.Services;
 using JiraTaskBar.App.ViewModels;
 using JiraTaskBar.App.Views;
 using JiraTaskBar.Core.Jira;
 using JiraTaskBar.Core.Storage;
+using JiraTaskBar.Core.Tracking;
 
 namespace JiraTaskBar.App.Tests;
 
@@ -138,6 +140,7 @@ public class WindowSmokeTests
             worklogCalendar.Show();
             worklogCalendar.UpdateLayout();
             worklogCalendar.Close();
+            AssertCalendarWorklogsStayInDayColumns(issue);
 
             var addWorklog = new AddWorklogWindow([issue], issue, DateTimeOffset.Now,
                 TimeSpan.FromMinutes(30), new NullJiraClient());
@@ -171,6 +174,50 @@ public class WindowSmokeTests
             controller.Dispose();
             app.Shutdown();
         });
+    }
+
+    private static void AssertCalendarWorklogsStayInDayColumns(JiraIssue issue)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var firstDay = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+        var start = today.AddDays(-(7 + (int)today.DayOfWeek - (int)firstDay) % 7);
+        var pending = Enumerable.Range(0, 7).SelectMany(day => Enumerable.Range(0, day % 2 + 1)
+            .Select(lane => new PendingWorklog(Guid.NewGuid(), issue.Key,
+                new DateTimeOffset(start.AddDays(day).ToDateTime(new TimeOnly(9, lane * 10))).ToUniversalTime(),
+                3600, new string('W', 200), 0))).ToList();
+        var calendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => pending);
+        try
+        {
+            calendar.Show();
+            foreach (var mode in new[] { 1, 2 }) // Week and Day use the same time grid.
+            {
+                ((ComboBox)calendar.FindName("ViewModeBox")).SelectedIndex = mode;
+                foreach (var width in new[] { 760d, 1120d, 1600d, 760d })
+                {
+                    calendar.Width = width;
+                    calendar.UpdateLayout();
+                    var host = (Grid)calendar.FindName("SchedulerHost");
+                    var scroll = Assert.IsType<ScrollViewer>(Assert.Single(host.Children.Cast<UIElement>()));
+                    var grid = Assert.IsType<Grid>(scroll.Content);
+                    var overlay = Assert.Single(grid.Children.OfType<Grid>());
+                    var days = grid.ColumnDefinitions.Count - 1;
+                    var lanes = overlay.ColumnDefinitions.Count / days;
+                    Assert.True(grid.ActualWidth <= scroll.ViewportWidth + 0.1,
+                        "Long worklog text must not expand the calendar beyond the viewport.");
+                    Assert.NotEmpty(overlay.Children.Cast<UIElement>());
+                    foreach (var block in overlay.Children.OfType<Border>())
+                    {
+                        var day = Grid.GetColumn(block) / lanes;
+                        var column = grid.ColumnDefinitions[day + 1];
+                        var left = block.TranslatePoint(new Point(0, 0), grid).X;
+                        Assert.True(left >= column.Offset - 0.1 && left + block.ActualWidth <= column.Offset + column.ActualWidth + 0.1,
+                            $"Worklog bounds {left}–{left + block.ActualWidth} exceed day {day} bounds " +
+                            $"{column.Offset}–{column.Offset + column.ActualWidth} at width {width} in mode {mode}.");
+                    }
+                }
+            }
+        }
+        finally { calendar.Close(); }
     }
 
     private static void RunOnSta(Action action)

@@ -411,7 +411,10 @@ public partial class WorklogCalendarWindow
         {
             Content = grid,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            // Measure both grids against the viewport width. Horizontal scrolling
+            // measures with infinite width, making star columns size to their
+            // different contents and misaligning worklog lanes with day columns.
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
         };
         SchedulerHost.Children.Add(_timeScroll);
         if (resetScroll)
