@@ -421,12 +421,26 @@ public class WindowSmokeTests
                 Width = 200,
                 Height = 60
             });
-            source.RootVisual = picker;
+            var next = new System.Windows.Controls.Button();
+            source.RootVisual = new StackPanel { Children = { picker, next } };
             picker.ApplyTemplate();
             var editor = (DatePickerTextBox)picker.Template.FindName("PART_TextBox", picker);
             Assert.Equal(@"03\11\2026", editor.Text);
 
             editor.Text = @"05\11\2026";
+            var menu = new ContextMenu();
+            Assert.True(FocusManager.GetIsFocusScope(menu));
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, editor, menu)
+            {
+                RoutedEvent = Keyboard.PreviewLostKeyboardFocusEvent
+            });
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, menu, editor)
+            {
+                RoutedEvent = Keyboard.PreviewGotKeyboardFocusEvent
+            });
+            Assert.Equal(@"05\11\2026", editor.Text);
+            Assert.Equal(new DateTime(2026, 11, 3), picker.SelectedDate);
+
             editor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
             {
                 RoutedEvent = Keyboard.PreviewKeyDownEvent
@@ -437,6 +451,15 @@ public class WindowSmokeTests
             });
             Assert.Equal(new DateTime(2026, 11, 5), picker.SelectedDate);
             Assert.Equal(@"05\11\2026", editor.Text);
+
+            editor.Text = @"06\11\2026";
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, editor, next)
+            {
+                RoutedEvent = Keyboard.PreviewLostKeyboardFocusEvent
+            });
+            editor.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
+            Assert.Equal(new DateTime(2026, 11, 6), picker.SelectedDate);
+            Assert.Equal(@"06\11\2026", editor.Text);
         });
     }
 

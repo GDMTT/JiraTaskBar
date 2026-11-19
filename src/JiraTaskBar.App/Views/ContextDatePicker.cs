@@ -45,7 +45,10 @@ public sealed class ContextDatePicker : DatePicker
     protected override void OnPreviewLostKeyboardFocus(KeyboardFocusChangedEventArgs e)
     {
         base.OnPreviewLostKeyboardFocus(e);
-        if (ReferenceEquals(e.OldFocus, _editor))
+        // A context menu can take keyboard focus while the editor retains logical focus.
+        // Normalize only when the native DatePicker will commit from its LostFocus handler.
+        if (_editor is { } editor && ReferenceEquals(e.OldFocus, editor) && e.NewFocus is DependencyObject target
+            && ReferenceEquals(FocusManager.GetFocusScope(editor), FocusManager.GetFocusScope(target)))
             NormalizeEditor();
     }
 
