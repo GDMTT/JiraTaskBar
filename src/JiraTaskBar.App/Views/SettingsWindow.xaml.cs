@@ -39,6 +39,9 @@ public partial class SettingsWindow : FluentWindow
         var resolutionIndex = Array.IndexOf(WorklogCalendarLayout.SupportedResolutions,
             WorklogCalendarLayout.NormalizeResolution(current.CalendarResolutionMinutes));
         CalendarResolutionBox.SelectedIndex = resolutionIndex;
+        DailyTargetBox.Value = current.DailyWorklogTargetMinutes;
+        WorklogColorsBox.Text = string.Join(Environment.NewLine,
+            (current.WorklogTypeColors ?? []).Select(rule => $"{rule.Project} / {rule.IssueType} = {rule.Color}"));
         StartupSwitch.IsChecked = current.StartWithWindows;
         HideFromCaptureSwitch.IsChecked = current.HideFromScreenCapture;
         ShowTitlesSwitch.IsChecked = current.ShowTitlesOnBar;
@@ -87,6 +90,7 @@ public partial class SettingsWindow : FluentWindow
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        if (!TryReadWorklogColors(out var worklogColors)) return;
         var outcome = await TestAsync();
         // Allow saving while offline, but not with credentials Jira has rejected.
         if (outcome == TestOutcome.Invalid) return;
@@ -107,6 +111,8 @@ public partial class SettingsWindow : FluentWindow
             ShortSessions = ShortSessionBox.SelectedIndex == 0 ? ShortSessionMode.RoundUpToMinute : ShortSessionMode.Skip,
             CalendarResolutionMinutes = WorklogCalendarLayout.SupportedResolutions[
                 Math.Max(0, CalendarResolutionBox.SelectedIndex)],
+            DailyWorklogTargetMinutes = DailyTargetBox.Value is > 0 and <= 1440 and var target ? (int)target : null,
+            WorklogTypeColors = worklogColors,
             StartWithWindows = StartupSwitch.IsChecked == true,
             HideFromScreenCapture = HideFromCaptureSwitch.IsChecked == true,
             ShowTitlesOnBar = ShowTitlesSwitch.IsChecked == true,
@@ -116,6 +122,32 @@ public partial class SettingsWindow : FluentWindow
             FloatTop = Result.FloatTop,
         };
         DialogResult = true;
+    }
+
+    private bool TryReadWorklogColors(out List<WorklogTypeColor> colors)
+    {
+        colors = [];
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in WorklogColorsBox.Text.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var slash = line.IndexOf('/');
+            var equals = line.LastIndexOf('=');
+            if (slash > 0 && equals > slash + 1)
+            {
+                var project = line[..slash].Trim();
+                var type = line[(slash + 1)..equals].Trim();
+                var color = line[(equals + 1)..].Trim();
+                if (project.Length > 0 && type.Length > 0 && color is ['#', _, _, _, _, _, _] &&
+                    color.Skip(1).All(Uri.IsHexDigit) && keys.Add($"{project}/{type}"))
+                {
+                    colors.Add(new(project, type, color.ToUpperInvariant()));
+                    continue;
+                }
+            }
+            ShowStatus(InfoBarSeverity.Error, "Enter one unique worklog color per project and issue type, in the format IT / Incident = #3866A8.");
+            return false;
+        }
+        return true;
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => DialogResult = false;
