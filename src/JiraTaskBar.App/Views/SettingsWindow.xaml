@@ -93,6 +93,16 @@
             <ComboBox x:Name="CalendarResolutionBox" Margin="0,4,0,10"
                       ToolTip="Day and Week calendar rows, selections, and edits snap to this interval." />
 
+            <TextBlock Text="Daily worklog target in minutes (optional)" FontWeight="SemiBold" />
+            <ui:NumberBox x:Name="DailyTargetBox" Margin="0,4,0,10" Minimum="0" Maximum="1440"
+                          SmallChange="15" MaxDecimalPlaces="0" ToolTip="Leave empty or enter zero to turn off the target." />
+
+            <TextBlock Text="Worklog colors by project and issue type" FontWeight="SemiBold" />
+            <TextBlock Margin="0,4,0,0" Text="Enter one rule per line, for example IT / Incident = #3866A8."
+                       TextWrapping="Wrap" Opacity="0.75" />
+            <TextBox x:Name="WorklogColorsBox" Margin="0,4,0,10" AcceptsReturn="True" MinLines="2"
+                     MaxLines="5" VerticalScrollBarVisibility="Auto" />
+
             <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,8" />
             <ui:ToggleSwitch x:Name="HideFromCaptureSwitch" Margin="0,0,0,8"
                              Content="Hide the bar from screen sharing and recordings"

@@ -342,6 +342,20 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Deletes_one_worklog_without_changing_the_remaining_estimate()
+    {
+        var (client, handler) = Create();
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+
+        await client.DeleteWorklogAsync("SD-1", "42");
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Delete, request.Method);
+        Assert.Equal("/rest/api/3/issue/SD-1/worklog/42?adjustEstimate=leave", request.PathAndQuery);
+        Assert.Throws<ArgumentException>(() => { _ = client.DeleteWorklogAsync("SD-1", "42/43"); });
+    }
+
+    [Fact]
     public async Task Redirects_are_errors_not_followed()
     {
         var (client, handler) = Create();

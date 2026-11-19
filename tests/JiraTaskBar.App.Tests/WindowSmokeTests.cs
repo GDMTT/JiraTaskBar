@@ -198,7 +198,15 @@ public class WindowSmokeTests
             .Select(lane => new PendingWorklog(Guid.NewGuid(), issue.Key,
                 new DateTimeOffset(start.AddDays(day).ToDateTime(new TimeOnly(9, lane * 10))).ToUniversalTime(),
                 3600, new string('W', 200), 0))).ToList();
-        var calendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => pending);
+        var now = DateTimeOffset.UtcNow;
+        var active = new ActiveSession(issue.Key, now.AddMinutes(-2), now);
+        var settings = new AppSettings
+        {
+            DailyWorklogTargetMinutes = 60,
+            WorklogTypeColors = [new("SD", issue.IssueType, "#203050")],
+        };
+        var calendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => pending,
+            active: () => active, settings: () => settings);
         try
         {
             calendar.Show();
@@ -210,11 +218,28 @@ public class WindowSmokeTests
                     calendar.Width = width;
                     calendar.UpdateLayout();
                     var host = (Grid)calendar.FindName("SchedulerHost");
-                    var scroll = Assert.IsType<ScrollViewer>(Assert.Single(host.Children.Cast<UIElement>()));
+                    var layout = Assert.IsType<DockPanel>(Assert.Single(host.Children.Cast<UIElement>()));
+                    var headings = Assert.IsType<Grid>(layout.Children[0]);
+                    var totals = Assert.IsType<Grid>(layout.Children[1]);
+                    var scroll = Assert.IsType<ScrollViewer>(layout.Children[2]);
                     var grid = Assert.IsType<Grid>(scroll.Content);
                     var overlay = Assert.Single(grid.Children.OfType<Grid>());
                     var days = grid.ColumnDefinitions.Count - 1;
                     Assert.Equal(days, overlay.ColumnDefinitions.Count);
+                    Assert.Equal(grid.ActualWidth, headings.ActualWidth, 1);
+                    Assert.Equal(grid.ActualWidth, totals.ActualWidth, 1);
+                    Assert.Equal(days, headings.Children.Count);
+                    Assert.Equal(days + 1, totals.Children.Count);
+                    Assert.Contains(overlay.Children.OfType<Grid>().SelectMany(entry => entry.Children.OfType<Border>()),
+                        block => block.ToolTip is string text && text.Contains("Running timer", StringComparison.Ordinal));
+                    if (mode == 1)
+                    {
+                        var oneLogDay = Enumerable.Range(0, 7).First(day => day % 2 == 0 && start.AddDays(day) != today);
+                        var total = Assert.IsType<Border>(totals.Children[oneLogDay + 1]);
+                        var run = Assert.IsType<System.Windows.Documents.Run>(Assert.IsType<TextBlock>(total.Child).Inlines.FirstInline);
+                        Assert.Equal("1:00:00", run.Text);
+                        Assert.Same(System.Windows.Media.Brushes.DarkGreen, run.Foreground);
+                    }
                     Assert.True(grid.ActualWidth <= scroll.ViewportWidth + 0.1,
                         "Long worklog text must not expand the calendar beyond the viewport.");
                     Assert.NotEmpty(overlay.Children.Cast<UIElement>());
@@ -230,8 +255,10 @@ public class WindowSmokeTests
                         Assert.InRange(block.ActualWidth, column.ActualWidth / entryHost.ColumnDefinitions.Count - 5,
                             column.ActualWidth / entryHost.ColumnDefinitions.Count - 3);
                     }
+                    var headingTop = headings.TranslatePoint(new Point(0, 0), host).Y;
                     scroll.ScrollToVerticalOffset(543);
                     calendar.UpdateLayout();
+                    Assert.Equal(headingTop, headings.TranslatePoint(new Point(0, 0), host).Y);
                     var offset = scroll.VerticalOffset;
                     typeof(WorklogCalendarWindow).GetMethod("RenderScheduler", BindingFlags.Instance | BindingFlags.NonPublic)!
                         .Invoke(calendar, [false]);
@@ -446,5 +473,6 @@ public class WindowSmokeTests
         }
         public Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<byte[]?> GetIssueTypeIconAsync(string avatarId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task DeleteWorklogAsync(string issueKey, string worklogId, CancellationToken ct = default) => throw new NotSupportedException();
     }
 }

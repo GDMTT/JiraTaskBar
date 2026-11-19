@@ -72,6 +72,7 @@ public sealed class AppController : IDisposable
         {
             Bar.SyncActive();
             UpdateTrayTooltip();
+            _worklogWindow?.RefreshLocalEntries();
         };
         Worklogs.QueueChanged += (_, _) => RefreshPendingWorklogState();
     }
@@ -328,7 +329,7 @@ public sealed class AppController : IDisposable
         }
 
         _worklogWindow = new WorklogCalendarWindow(ticket.Issue, Client, () => Worklogs.Pending,
-            () => Bar.CalendarIssues, Settings.CalendarResolutionMinutes);
+            () => Bar.CalendarIssues, Settings.CalendarResolutionMinutes, () => Tracker.Active, () => Settings);
         _worklogWindow.Closed += (_, _) => _worklogWindow = null;
         _worklogWindow.Show();
     }
@@ -373,6 +374,7 @@ public sealed class AppController : IDisposable
         }
 
         Bar.PendingWorklogs = Worklogs.PendingCount;
+        _worklogWindow?.RefreshLocalEntries();
         RefreshWorklogCalendars();
     }
 
@@ -681,6 +683,7 @@ public sealed class AppController : IDisposable
         if (window.ShowDialog() != true || window.Credentials is not { } credentials) return false;
 
         Settings = window.Result;
+        _worklogWindow?.RefreshLocalEntries();
         _secrets.Save(credentials);
         _credentials = credentials;
         IsAuthFailed = false;
