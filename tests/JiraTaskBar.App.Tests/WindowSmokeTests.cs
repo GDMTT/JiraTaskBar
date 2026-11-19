@@ -153,6 +153,7 @@ public class WindowSmokeTests
                 Assert.False(CalendarField<DispatcherTimer>(worklogCalendar, "_currentTimeTimer").IsEnabled);
             }
             AssertCalendarWorklogsStayInDayColumns(issue);
+            AssertSyncedOvernightWorklogKeepsItsDaySegment(issue);
 
             var addWorklog = new AddWorklogWindow([issue], issue, DateTimeOffset.Now,
                 TimeSpan.FromMinutes(30), new NullJiraClient());
@@ -187,6 +188,33 @@ public class WindowSmokeTests
             AssertCalendarClickEditsSavedWorklog(issue);
             app.Shutdown();
         });
+    }
+
+    private static void AssertSyncedOvernightWorklogKeepsItsDaySegment(JiraIssue issue)
+    {
+        const string outsideQuery = "OTHER-42";
+        var started = new DateTimeOffset(DateTime.Today.AddHours(-1));
+        var pending = new List<PendingWorklog> { new(Guid.NewGuid(), outsideQuery, started, 7200, "", 0) };
+        var client = new NullJiraClient { Worklogs = [] };
+        var calendar = new WorklogCalendarWindow(issue, client, () => pending);
+        try
+        {
+            calendar.Show();
+            ((ComboBox)calendar.FindName("ViewModeBox")).SelectedIndex = (int)WorklogCalendarView.Day;
+            Assert.Contains("1:00:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+
+            pending.Clear();
+            client.Worklogs = [new("11", outsideQuery, started, 7200, "Tester", null)];
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            var grid = CalendarField<Grid>(calendar, "_timeGrid");
+            var overlay = Assert.Single(grid.Children.OfType<Grid>());
+            var block = Assert.Single(Assert.Single(overlay.Children.OfType<Grid>()).Children.OfType<Border>());
+            Assert.Contains("Click to edit the full worklog", Assert.IsType<string>(block.ToolTip));
+            Assert.Contains("1:00:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+            Assert.Same(System.Windows.Media.Brushes.Black,
+                WorklogCalendarWindow.WorklogTextBrush(System.Windows.Media.Color.FromRgb(0, 170, 0)));
+        }
+        finally { calendar.Close(); }
     }
 
     private static void AssertCalendarWorklogsStayInDayColumns(JiraIssue issue)
@@ -456,7 +484,8 @@ public class WindowSmokeTests
         public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) =>
-            Worklogs is null ? throw new NotSupportedException() : Task.FromResult(Worklogs);
+            Worklogs is null ? throw new NotSupportedException()
+                : Task.FromResult<IReadOnlyList<JiraWorklog>>(Worklogs.Where(worklog => worklog.IssueKey == issueKey).ToList());
         public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default)
         {

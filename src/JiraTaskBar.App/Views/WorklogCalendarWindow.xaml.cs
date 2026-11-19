@@ -41,6 +41,7 @@ public partial class WorklogCalendarWindow
     private WorklogCalendarView _view = WorklogCalendarView.Week;
     private IReadOnlyList<JiraWorklog> _worklogs = [];
     private readonly Dictionary<string, Color> _worklogColors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _localIssueKeys = new(StringComparer.OrdinalIgnoreCase);
     private string? _highlightedIssueKey;
     private bool _updatingHighlight;
     private bool _localChangePending;
@@ -148,7 +149,7 @@ public partial class WorklogCalendarWindow
         StatusText.Text = "Loading Jira worklogs…";
         try
         {
-            var result = await WorklogCalendarData.LoadAsync(_client, _issues(), selectedIssue, load.Token);
+            var result = await WorklogCalendarData.LoadAsync(_client, _issues(), selectedIssue, load.Token, _localIssueKeys);
             if (version != _loadVersion || !_issue.Key.Equals(selectedIssue.Key, StringComparison.OrdinalIgnoreCase))
                 return false;
             if (_calendarEdit is not null || _savingEdit)
@@ -222,6 +223,7 @@ public partial class WorklogCalendarWindow
             CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek);
         RangeTitle.Text = RangeLabel(range);
         var allEntries = Entries().ToList();
+        _localIssueKeys.UnionWith(allEntries.Where(entry => entry.Pending).Select(entry => entry.IssueKey));
         var tickets = _issues().Append(_issue).DistinctBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase).ToList();
         UpdateHighlightOptions(tickets.Select(issue => issue.Key).Concat(allEntries.Select(entry => entry.IssueKey)));
         var settings = _settings();
@@ -231,9 +233,7 @@ public partial class WorklogCalendarWindow
         var end = WorklogCalendarLayout.LocalDateTime(range.EndExclusive, TimeOnly.MinValue, TimeZoneInfo.Local);
         var rangeEntries = allEntries.Where(entry => entry.Started < end && entry.Ended > start).ToList();
         var dayTotals = days.Select(day => rangeEntries.Sum(entry => ClipToDay(entry, day)?.Seconds ?? 0)).ToArray();
-        var entries = rangeEntries.SelectMany(entry => entry.Pending
-                ? days.Select(day => ClipToDay(entry, day)).OfType<CalendarEntry>()
-                : entry.Date >= range.Start && entry.Date < range.EndExclusive ? [entry] : Array.Empty<CalendarEntry>())
+        var entries = rangeEntries.SelectMany(entry => days.Select(day => ClipToDay(entry, day)).OfType<CalendarEntry>())
             .OrderBy(e => e.Started)
             .ToList();
         RangeTotal.Text = $"Total: {FormatDuration(dayTotals.Sum())}";
@@ -609,20 +609,20 @@ public partial class WorklogCalendarWindow
     private Border WorklogBlock(CalendarEntry entry)
     {
         var fill = EntryFill(entry);
+        var canDrag = !entry.Pending && !entry.Segment;
         var text = new TextBlock
         {
             Text = $"{entry.Started:HH:mm}–{entry.Ended:HH:mm}  {FormatDuration(entry.Seconds)}\n" +
                    $"{entry.IssueKey} · {entry.Author}  {entry.Comment}",
             TextWrapping = TextWrapping.Wrap,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            Foreground = (fill.Color.R * 0.299 + fill.Color.G * 0.587 + fill.Color.B * 0.114) >= 135
-                ? Brushes.Black : Brushes.White,
+            Foreground = WorklogTextBrush(fill.Color),
             FontSize = 11,
             Margin = new Thickness(6, 3, 6, 3),
         };
         var content = new Grid();
         content.RowDefinitions.Add(new RowDefinition());
-        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(7) });
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(canDrag ? 7 : 0) });
         content.Children.Add(text);
         var resizeHandle = new Border
         {
@@ -632,10 +632,10 @@ public partial class WorklogCalendarWindow
             Background = MakeBrush(0xB0, 0xFF, 0xFF, 0xFF),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Bottom,
-            Cursor = entry.Pending ? Cursors.Arrow : Cursors.SizeNS,
+            Cursor = Cursors.SizeNS,
         };
         Grid.SetRow(resizeHandle, 1);
-        if (entry.Pending) resizeHandle.Visibility = Visibility.Collapsed;
+        if (!canDrag) resizeHandle.Visibility = Visibility.Collapsed;
         content.Children.Add(resizeHandle);
 
         var block = new Border
@@ -646,11 +646,12 @@ public partial class WorklogCalendarWindow
             Background = fill,
             BorderBrush = IsFocusedIssue(entry.IssueKey) ? Brushes.DodgerBlue : Brushes.DimGray,
             BorderThickness = new Thickness(IsFocusedIssue(entry.IssueKey) ? 2 : 1),
-            ToolTip = EntryTooltip(entry) + (entry.Pending ? "\nThis worklog can be edited after it is saved in Jira." :
-                "\nClick to edit; drag to move; drag the bottom edge to change duration."),
+            ToolTip = EntryTooltip(entry) + (entry.Pending ? "\nThis worklog can be edited after it is saved in Jira."
+                : entry.Segment ? "\nClick to edit the full worklog."
+                : "\nClick to edit; drag to move; drag the bottom edge to change duration."),
             Child = content,
             Tag = entry,
-            Cursor = entry.Pending ? Cursors.Arrow : Cursors.SizeAll,
+            Cursor = entry.Pending ? Cursors.Arrow : canDrag ? Cursors.SizeAll : Cursors.Hand,
         };
         if (entry.Pending)
             block.MouseLeftButtonDown += (_, e) => e.Handled = true;
@@ -667,7 +668,7 @@ public partial class WorklogCalendarWindow
     private void Worklog_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (_savingEdit || sender is not Border { Tag: CalendarEntry entry } block || _timeGrid is null) return;
-        var resize = e.GetPosition(block).Y >= Math.Max(0, block.ActualHeight - 5);
+        var resize = !entry.Segment && e.GetPosition(block).Y >= Math.Max(0, block.ActualHeight - 5);
         var row = Grid.GetRow((Grid)block.Parent);
         var span = Grid.GetRowSpan((Grid)block.Parent);
         var pointer = TimeSlotAt(_timeGrid, e.GetPosition(_timeGrid));
@@ -676,13 +677,14 @@ public partial class WorklogCalendarWindow
             pointer is null ? 0 : Math.Clamp(pointer.Slot - row, 0, Math.Max(0, span - 1)),
             e.GetPosition(_timeGrid));
         block.CaptureMouse();
-        StatusText.Text = resize ? "Drag the bottom edge to change duration…" : "Drag the worklog to a new time or day…";
+        StatusText.Text = entry.Segment ? "Click to edit the full worklog…" :
+            resize ? "Drag the bottom edge to change duration…" : "Drag the worklog to a new time or day…";
         e.Handled = true;
     }
 
     private void Worklog_MouseMove(object sender, MouseEventArgs e)
     {
-        if (_calendarEdit is not { } edit || sender != edit.Block || e.LeftButton != MouseButtonState.Pressed ||
+        if (_calendarEdit is not { } edit || edit.Entry.Segment || sender != edit.Block || e.LeftButton != MouseButtonState.Pressed ||
             _timeGrid is null || TimeSlotAt(_timeGrid, e.GetPosition(_timeGrid)) is not { } slot) return;
         var position = e.GetPosition(_timeGrid);
         if (!edit.Dragged && Math.Abs(position.X - edit.PointerStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
@@ -930,8 +932,8 @@ public partial class WorklogCalendarWindow
         var saved = false;
         try
         {
-            var dialog = new AddWorklogWindow([issue], issue, entry.Started,
-                TimeSpan.FromSeconds(entry.Seconds), _client, worklog) { Owner = this };
+            var dialog = new AddWorklogWindow([issue], issue, worklog.Started,
+                TimeSpan.FromSeconds(worklog.TimeSpentSeconds), _client, worklog) { Owner = this };
             dialog.ShowDialog();
             saved = dialog.WorklogSaved || dialog.WorklogDeleted;
         }
@@ -971,7 +973,9 @@ public partial class WorklogCalendarWindow
         var nextMidnight = WorklogCalendarLayout.LocalDateTime(day.AddDays(1), TimeOnly.MinValue, TimeZoneInfo.Local);
         var start = entry.Started > midnight ? entry.Started : midnight;
         var end = entryEnd < nextMidnight ? entryEnd : nextMidnight;
-        return end > start ? entry with { Started = start, Seconds = (int)(end - start).TotalSeconds } : null;
+        if (end <= start) return null;
+        if (start == entry.Started && end == entryEnd) return entry;
+        return entry with { Started = start, Seconds = (int)(end - start).TotalSeconds, Segment = true };
     }
 
     private void UpdateWorklogColors(IReadOnlyList<JiraIssue> tickets, IEnumerable<WorklogTypeColor> rules)
@@ -998,6 +1002,18 @@ public partial class WorklogCalendarWindow
     }
 
     private static byte Lighten(byte channel) => (byte)(channel + (255 - channel) * 0.45);
+
+    internal static Brush WorklogTextBrush(Color color)
+    {
+        static double Linear(byte channel)
+        {
+            var value = channel / 255d;
+            return value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+        }
+
+        var luminance = 0.2126 * Linear(color.R) + 0.7152 * Linear(color.G) + 0.0722 * Linear(color.B);
+        return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? Brushes.Black : Brushes.White;
+    }
 
     private bool IsFocusedIssue(string issueKey) =>
         issueKey.Equals(_highlightedIssueKey ?? _issue.Key, StringComparison.OrdinalIgnoreCase);
@@ -1058,7 +1074,7 @@ public partial class WorklogCalendarWindow
     }
 
     private sealed record CalendarEntry(string Id, string IssueKey, DateTimeOffset Started, int Seconds,
-        string Author, string Comment, bool Pending, bool Running = false)
+        string Author, string Comment, bool Pending, bool Running = false, bool Segment = false)
     {
         public DateOnly Date => DateOnly.FromDateTime(Started.DateTime);
         public DateTimeOffset Ended => Started.AddSeconds(Seconds).ToLocalTime();
