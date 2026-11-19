@@ -142,6 +142,14 @@ public class WindowSmokeTests
             contextReport.UpdateLayout();
             contextReport.Close();
 
+            var aboutItem = controller.BuildMenu().Items.OfType<MenuItem>().Single(item => Equals(item.Header, "About…"));
+            aboutItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            var about = Assert.Single(app.Windows.OfType<AboutWindow>());
+            Assert.Equal("Jira TaskBar", ((TextBlock)about.FindName("ProductName")).Text);
+            Assert.Matches(@"^Version: \d+\.\d+\.\d+", ((TextBlock)about.FindName("ReleaseVersion")).Text);
+            Assert.EndsWith(" UTC", ((TextBlock)about.FindName("BuildTime")).Text);
+            about.Close();
+
             foreach (var resolution in WorklogCalendarLayout.SupportedResolutions)
             {
                 var worklogCalendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => [],
