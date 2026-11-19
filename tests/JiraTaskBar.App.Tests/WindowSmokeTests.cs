@@ -3,6 +3,7 @@ using System.Runtime.ExceptionServices;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -140,6 +141,14 @@ public class WindowSmokeTests
             var contextReport = new ContextReportWindow(controller.ContextHistory);
             contextReport.Show();
             contextReport.UpdateLayout();
+            var fromDate = (ContextDatePicker)contextReport.FindName("FromDate");
+            var toDate = (ContextDatePicker)contextReport.FindName("ToDate");
+            var fromEditor = (DatePickerTextBox)fromDate.Template.FindName("PART_TextBox", fromDate);
+            var toEditor = (DatePickerTextBox)toDate.Template.FindName("PART_TextBox", toDate);
+            fromDate.SelectedDate = new DateTime(2026, 11, 3);
+            toDate.SelectedDate = new DateTime(2026, 11, 9);
+            Assert.Equal(@"03\11\2026", fromEditor.Text);
+            Assert.Equal(@"09\11\2026", toEditor.Text);
             contextReport.Close();
 
             var aboutItem = controller.BuildMenu().Items.OfType<MenuItem>().Single(item => Equals(item.Header, "About…"));
@@ -457,6 +466,64 @@ public class WindowSmokeTests
         SetTime(now);
         Assert.Equal(Visibility.Visible, line.Visibility);
         Assert.Equal(3, Grid.GetColumn(line));
+    }
+
+    [Fact]
+    public void Context_date_picker_commits_backslash_dates()
+    {
+        RunOnSta(() =>
+        {
+            var picker = new ContextDatePicker
+            {
+                Language = System.Windows.Markup.XmlLanguage.GetLanguage("en-GB"),
+                SelectedDateFormat = DatePickerFormat.Short,
+                SelectedDate = new DateTime(2026, 11, 3)
+            };
+            using var source = new HwndSource(new HwndSourceParameters("Context date picker test")
+            {
+                Width = 200,
+                Height = 60
+            });
+            var next = new System.Windows.Controls.Button();
+            source.RootVisual = new StackPanel { Children = { picker, next } };
+            picker.ApplyTemplate();
+            var editor = (DatePickerTextBox)picker.Template.FindName("PART_TextBox", picker);
+            Assert.Equal(@"03\11\2026", editor.Text);
+
+            editor.Text = @"05\11\2026";
+            var menu = new ContextMenu();
+            Assert.True(FocusManager.GetIsFocusScope(menu));
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, editor, menu)
+            {
+                RoutedEvent = Keyboard.PreviewLostKeyboardFocusEvent
+            });
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, menu, editor)
+            {
+                RoutedEvent = Keyboard.PreviewGotKeyboardFocusEvent
+            });
+            Assert.Equal(@"05\11\2026", editor.Text);
+            Assert.Equal(new DateTime(2026, 11, 3), picker.SelectedDate);
+
+            editor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent
+            });
+            editor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.KeyDownEvent
+            });
+            Assert.Equal(new DateTime(2026, 11, 5), picker.SelectedDate);
+            Assert.Equal(@"05\11\2026", editor.Text);
+
+            editor.Text = @"06\11\2026";
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, editor, next)
+            {
+                RoutedEvent = Keyboard.PreviewLostKeyboardFocusEvent
+            });
+            editor.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
+            Assert.Equal(new DateTime(2026, 11, 6), picker.SelectedDate);
+            Assert.Equal(@"06\11\2026", editor.Text);
+        });
     }
 
     private static void RunOnSta(Action action)
