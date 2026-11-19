@@ -20,6 +20,7 @@ public sealed record JiraIssue(
     public bool IsServiceDesk => string.Equals(ProjectTypeKey, "service_desk", StringComparison.OrdinalIgnoreCase);
 
     public int PriorityRank => Priority?.Rank ?? int.MaxValue;
+    public JiraSla? Sla { get; init; }
 }
 
 public sealed record JiraUser(string AccountId, string DisplayName, string? EmailAddress);

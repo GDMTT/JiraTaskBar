@@ -13,6 +13,7 @@ public sealed partial class BarViewModel : ObservableObject
     private readonly AppController _app;
     private readonly Dictionary<string, TicketViewModel> _byKey = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<JiraIssue> _lastIssues = [];
+    private IJiraClient? _slaOwner;
     private long _lastFilterMinute = long.MinValue;
 
     public BarViewModel(AppController app)
@@ -77,7 +78,7 @@ public sealed partial class BarViewModel : ObservableObject
     public async Task RefreshAsync()
     {
         if (IsRefreshing) return;
-        if (_app.Client is null)
+        if (_app.Client is not { } client)
         {
             StatusMessage = "Not connected – open Settings";
             return;
@@ -86,11 +87,22 @@ public sealed partial class BarViewModel : ObservableObject
         IsRefreshing = true;
         try
         {
-            _lastIssues = await _app.FetchIssuesAsync();
+            var issues = await _app.FetchIssuesAsync();
+            if (!ReferenceEquals(_app.Client, client)) return;
+            if (ReferenceEquals(_slaOwner, client))
+            {
+                var previous = _lastIssues.Where(issue => issue.Sla is not null)
+                    .DistinctBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(issue => issue.Key, issue => issue.Sla, StringComparer.OrdinalIgnoreCase);
+                issues = issues.Select(issue => issue.IsServiceDesk && previous.TryGetValue(issue.Key, out var sla)
+                    ? issue with { Sla = sla } : issue).ToArray();
+            }
+            _slaOwner = client;
+            _lastIssues = issues;
             _app.ReportAuthSuccess();
             StatusMessage = null;
             Rebuild();
-            await _app.Worklogs.RetryPendingAsync();
+            await Task.WhenAll(_app.Worklogs.RetryPendingAsync(), LoadSlasAsync(client, issues));
         }
         catch (JiraApiException ex) when (ex.StatusCode == 401)
         {
@@ -107,6 +119,40 @@ public sealed partial class BarViewModel : ObservableObject
             IsRefreshing = false;
             PendingWorklogs = _app.Worklogs.PendingCount;
         }
+    }
+
+    private async Task LoadSlasAsync(IJiraClient client, IReadOnlyList<JiraIssue> issues)
+    {
+        var result = issues.ToArray();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var options = new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = timeout.Token };
+        try
+        {
+            await Parallel.ForEachAsync(Enumerable.Range(0, result.Length).Where(i => result[i].IsServiceDesk),
+                options, async (index, ct) =>
+                {
+                    var issue = result[index];
+                    try
+                    {
+                        var sla = await client.GetRequestSlaAsync(issue.Key, ct);
+                        result[index] = issue with { Sla = sla };
+                    }
+                    catch (JiraApiException ex) when (ex.StatusCode is 401 or 403 or 404)
+                    {
+                        result[index] = issue with { Sla = null };
+                    }
+                    catch (Exception ex) when (ex is JiraApiException or HttpRequestException)
+                    {
+                        // SLA availability must not interrupt the issue refresh or erase the last known status.
+                        Log.Error($"Could not load SLA for {issue.Key}", ex);
+                    }
+                });
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
+
+        if (!ReferenceEquals(client, _app.Client) || result.SequenceEqual(issues)) return;
+        _lastIssues = result;
+        Rebuild();
     }
 
     /// <summary>Re-applies the active state after the tracker changes.</summary>

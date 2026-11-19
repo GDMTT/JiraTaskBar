@@ -115,6 +115,7 @@ public sealed class FakeJiraClient : IJiraClient
         Task.FromResult(JiraDurationSettings.Default);
     public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default) => Task.FromResult<JiraSla?>(null);
     public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) => throw new NotSupportedException();
     public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default) => throw new NotSupportedException();

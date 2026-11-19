@@ -11,6 +11,7 @@ public interface IJiraClient
     Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
+    Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
     Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
     Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
@@ -145,6 +146,23 @@ public sealed class JiraClient : IJiraClient
         } while (token is not null && all.Count < MaxIssues);
 
         return IssueOrdering.Sort(all);
+    }
+
+    public async Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default)
+    {
+        var path = $"rest/servicedeskapi/request/{Uri.EscapeDataString(issueKey)}/sla";
+        for (var start = 0; start < 1000;)
+        {
+            var response = await SendAsync(HttpMethod.Get, $"{path}?start={start}&limit=50", null, ct) as JsonObject;
+            if (response?["values"] is not JsonArray { Count: > 0 } values) return null;
+            foreach (var metric in values.OfType<JsonObject>())
+                if (JiraSla.Parse(metric) is { } sla) return sla;
+
+            if (response["isLastPage"] is not JsonValue last || !last.TryGetValue<bool>(out var isLast) || isLast)
+                return null;
+            start += values.Count;
+        }
+        return null;
     }
 
     public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) =>
