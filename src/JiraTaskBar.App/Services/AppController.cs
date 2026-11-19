@@ -40,6 +40,7 @@ public sealed class AppController : IDisposable
     private TaskbarIcon? _tray;
     private BarWindow? _bar;
     private ContextReportWindow? _contextReportWindow;
+    private AboutWindow? _aboutWindow;
     private DateTimeOffset _lastHeartbeat;
     private DateTimeOffset? _awaySinceUtc;
     private bool _awayPromptOpen;
@@ -585,6 +586,7 @@ public sealed class AppController : IDisposable
         menu.Items.Add(startup);
 
         menu.Items.Add(Item("Open data folder", null, () => Shell.OpenFolder(AppPaths.DataDirectory)));
+        menu.Items.Add(Item("About…", null, OpenAbout));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Exit", SymbolRegular.Power24, () => _ = ExitAsync()));
     }
@@ -645,6 +647,19 @@ public sealed class AppController : IDisposable
     }
 
     private void OpenSettings() => OpenSettings(message: null);
+
+    private void OpenAbout()
+    {
+        if (_aboutWindow is not null)
+        {
+            _aboutWindow.Activate();
+            return;
+        }
+
+        _aboutWindow = new AboutWindow();
+        _aboutWindow.Closed += (_, _) => _aboutWindow = null;
+        _aboutWindow.Show();
+    }
 
     private void OpenContextReport()
     {
@@ -824,6 +839,7 @@ public sealed class AppController : IDisposable
         foreach (var w in _commentWindows.Values.ToList()) w.ForceClose();
         _worklogWindow?.Close();
         _contextReportWindow?.Close();
+        _aboutWindow?.Close();
         _bar?.Close();
         _app.Shutdown();
     }

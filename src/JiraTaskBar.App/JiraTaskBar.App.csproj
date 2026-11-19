@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="JiraTaskBar.App.Tests" />
+    <AssemblyMetadata Include="ReleaseVersion" Value="$(Version)" />
+    <AssemblyMetadata Include="BuildTimeUtc" Value="$([System.DateTime]::UtcNow.ToString('O'))" />
   </ItemGroup>
 
   <PropertyGroup>
