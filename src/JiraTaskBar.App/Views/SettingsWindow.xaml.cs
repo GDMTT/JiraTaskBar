@@ -27,6 +27,7 @@ public partial class SettingsWindow : FluentWindow
         EmailBox.Text = saved?.Email ?? current.Email ?? string.Empty;
         CloudIdBox.Text = saved?.CloudId ?? string.Empty;
         ScopesRun.Text = JiraConnection.RequiredScopes;
+        SlaScopeRun.Text = JiraConnection.GranularSlaScope;
         // New sign-ins default to a scoped token; existing classic tokens stay classic until changed.
         (saved is { CloudId: null } ? ClassicRadio : ScopedRadio).IsChecked = true;
 

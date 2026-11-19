@@ -80,6 +80,55 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Request_sla_keeps_the_latest_completed_cycle_ahead_of_the_due_date()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"values":[{"name":"Unavailable","completedCycles":[]}],"isLastPage":false}""");
+        handler.Respond("""
+            {"values":[{"name":"Time to resolution","completedCycles":[
+                {"stopTime":{"epochMillis":2000},"breached":false},
+                {"stopTime":{"epochMillis":1000},"breached":true}
+            ]}],"isLastPage":true}
+            """);
+
+        var sla = await client.GetRequestSlaAsync("SD-2");
+        Assert.Equal("/rest/servicedeskapi/request/SD-2/sla?start=0&limit=50", handler.Requests[0].PathAndQuery);
+        Assert.Contains("start=1", handler.Requests[1].PathAndQuery);
+        var issue = new JiraIssue("SD-2", "Ticket", null, "Done", "service_desk", "Task",
+            DueDate: new DateOnly(2026, 11, 1)) { Sla = sla };
+        var now = new DateTimeOffset(2026, 11, 19, 0, 0, 0, TimeSpan.Zero);
+        var urgency = DueDateProgress.CalculateUrgency(issue, now, TimeZoneInfo.Utc);
+        Assert.Equal(DueDateKind.Met, urgency.Kind);
+        Assert.Equal("Time to resolution (SLA): Met", urgency.Tooltip);
+        var breached = issue with { Sla = Assert.IsType<JiraSla>(sla) with { Breached = true } };
+        Assert.Equal("Time to resolution (SLA): Breached",
+            DueDateProgress.CalculateUrgency(breached, now, TimeZoneInfo.Utc).Tooltip);
+        Assert.Equal(DueDateKind.Overdue, DueDateProgress.CalculateUrgency(issue with { Sla = null }, now, TimeZoneInfo.Utc).Kind);
+        Assert.Equal(DueDateKind.None,
+            DueDateProgress.CalculateUrgency(issue with { Sla = null, DueDate = null }, now, TimeZoneInfo.Utc).Kind);
+    }
+
+    [Fact]
+    public async Task Ongoing_sla_supersedes_past_cycles_and_preserves_paused_state()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"values":[{"name":"Response","ongoingCycle":{"breached":false,"withinCalendarHours":false,
+                "goalDuration":{"millis":600000},"remainingTime":{"millis":300000}},
+                "completedCycles":[{"breached":true}]}],"isLastPage":true}
+            """);
+        var issue = new JiraIssue("SD-2", "Ticket", null, "Open", "service_desk", "Task")
+            { Sla = await client.GetRequestSlaAsync("SD-2") };
+        var urgency = DueDateProgress.CalculateUrgency(issue, DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
+        Assert.Contains("Paused", urgency.Tooltip);
+        Assert.Contains("Remaining when checked at", urgency.Tooltip);
+        Assert.Equal(0.5, urgency.RemainingFraction);
+        var stale = DueDateProgress.CalculateUrgency(issue, DateTimeOffset.UtcNow.AddMinutes(11), TimeZoneInfo.Utc);
+        Assert.Contains("Waiting for a fresh Jira reading", stale.Tooltip);
+        Assert.Null(stale.RemainingFraction);
+    }
+
+    [Fact]
     public async Task Worklog_payload_uses_jira_date_format()
     {
         var (client, handler) = Create();

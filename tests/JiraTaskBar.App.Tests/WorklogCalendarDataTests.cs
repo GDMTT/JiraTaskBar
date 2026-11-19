@@ -70,6 +70,7 @@ public class WorklogCalendarDataTests
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default) => Task.FromResult<JiraSla?>(null);
         public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default) => throw new NotSupportedException();
         public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) => throw new NotSupportedException();

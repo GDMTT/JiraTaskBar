@@ -53,6 +53,11 @@
                     <Run Text="→ Jira, and select:" />
                     <Run x:Name="ScopesRun" FontFamily="Consolas" />
                 </TextBlock>
+                <TextBlock FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,0">
+                    <Run Text="SLA lookup uses read:jira-work or the granular scope" />
+                    <Run x:Name="SlaScopeRun" FontFamily="Consolas" />
+                    <Run Text="and needs permission to view the Jira service request." />
+                </TextBlock>
                 <TextBlock Text="Cloud ID" FontWeight="SemiBold" Margin="0,6,0,0" />
                 <ui:TextBox x:Name="CloudIdBox" Margin="0,4,0,2" FontFamily="Consolas"
                             PlaceholderText="Found automatically from the site – or paste it from admin.atlassian.com" />
