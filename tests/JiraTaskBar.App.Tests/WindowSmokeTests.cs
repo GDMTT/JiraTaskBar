@@ -28,8 +28,11 @@ public class WindowSmokeTests
         RunOnSta(() =>
         {
             AppPaths.DataDirectory = Path.Combine(Path.GetTempPath(), "JiraTaskBarSmoke", Guid.NewGuid().ToString("N"));
-            var app = new App();
-            app.InitializeComponent();
+            var app = new SmokeTestApp();
+            app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ThemesDictionary { Theme = Wpf.Ui.Appearance.ApplicationTheme.Dark });
+            app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ControlsDictionary());
+            app.Resources.Add("BoolToVisibility", new BooleanToVisibilityConverter());
+            app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
             var controller = new AppController(app);
             var issue = new JiraIssue("SD-42", "Printer on fire", new JiraPriority("1", "1 - Critical", 1), "Waiting", "service_desk", "Incident");
@@ -413,6 +416,12 @@ public class WindowSmokeTests
         thread.Start();
         thread.Join();
         error?.Throw();
+    }
+
+    private sealed class SmokeTestApp : App
+    {
+        // Modal dialogs can pump the dispatcher during tests. The harness owns application startup.
+        protected override void OnStartup(StartupEventArgs e) { }
     }
 
     private sealed class NullJiraClient : IJiraClient
