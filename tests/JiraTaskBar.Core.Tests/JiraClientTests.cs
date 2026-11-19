@@ -345,14 +345,109 @@ public class JiraClientTests
     public async Task Deletes_one_worklog_without_changing_the_remaining_estimate()
     {
         var (client, handler) = Create();
+        handler.Respond("""{"startAt":0,"total":1,"comments":[{"id":"10","body":"Older unlinked comment"}]}""");
         handler.Respond(string.Empty, HttpStatusCode.NoContent);
 
         await client.DeleteWorklogAsync("SD-1", "42");
 
-        var request = Assert.Single(handler.Requests);
+        var request = Assert.Single(handler.Requests.Where(item => item.Method == HttpMethod.Delete));
         Assert.Equal(HttpMethod.Delete, request.Method);
         Assert.Equal("/rest/api/3/issue/SD-1/worklog/42?adjustEstimate=leave", request.PathAndQuery);
-        Assert.Throws<ArgumentException>(() => { _ = client.DeleteWorklogAsync("SD-1", "42/43"); });
+        await Assert.ThrowsAsync<ArgumentException>(() => client.DeleteWorklogAsync("SD-1", "42/43"));
+    }
+
+    [Fact]
+    public async Task Creates_the_worklog_comment_with_its_exact_id_and_internal_visibility()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"id":"42"}""", HttpStatusCode.Created);
+        handler.Respond("""{"id":"11"}""", HttpStatusCode.Created);
+
+        var worklogId = await client.AddWorklogAsync("SD-1", DateTimeOffset.UtcNow, 60);
+        Assert.Equal("42", worklogId);
+        await client.AddWorklogCommentAsync("SD-1", worklogId!, "Progress");
+
+        var request = handler.Requests[1];
+        var properties = JsonNode.Parse(request.Body!)!["properties"]!.AsArray();
+        Assert.Equal("/rest/api/2/issue/SD-1/comment", request.PathAndQuery);
+        Assert.Contains(properties, property => property!["key"]!.GetValue<string>() == "sd.public.comment" &&
+            property["value"]!["internal"]!.GetValue<bool>());
+        Assert.Contains(properties, property => property!["key"]!.GetValue<string>() == "jirataskbar.worklog" &&
+            property["value"]!["worklogId"]!.GetValue<string>() == worklogId);
+    }
+
+    [Fact]
+    public async Task Delete_only_removes_comments_explicitly_linked_to_that_worklog_across_pages()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"startAt":0,"total":3,"comments":[
+              {"id":"10","body":"Same text","properties":[{"key":"sd.public.comment","value":{"internal":true}}]},
+              {"id":"11","body":"Same text","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"99"}}]}
+            ]}
+            """);
+        handler.Respond("""
+            {"startAt":2,"total":3,"comments":[
+              {"id":"12","body":"Same text","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]}
+            ]}
+            """);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+
+        await client.DeleteWorklogAsync("SD-1", "42");
+
+        Assert.Contains("expand=properties", handler.Requests[0].PathAndQuery);
+        Assert.Contains("startAt=2", handler.Requests[1].PathAndQuery);
+        Assert.Equal(
+            ["/rest/api/2/issue/SD-1/comment/12", "/rest/api/3/issue/SD-1/worklog/42?adjustEstimate=leave"],
+            handler.Requests.Where(item => item.Method == HttpMethod.Delete).Select(item => item.PathAndQuery));
+    }
+
+    [Fact]
+    public async Task Failed_linked_comment_deletion_keeps_the_worklog_available_for_retry()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"startAt":0,"total":2,"comments":[
+              {"id":"11","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]},
+              {"id":"12","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]}
+            ]}
+            """);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+        handler.Respond("""{"errorMessages":["Missing permission"]}""", HttpStatusCode.Forbidden);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.DeleteWorklogAsync("SD-1", "42"));
+        Assert.Contains("Jira deleted 1 linked comment", error.Message);
+        Assert.DoesNotContain(handler.Requests, item => item.Method == HttpMethod.Delete && item.PathAndQuery.Contains("/worklog/"));
+
+        handler.Respond("""
+            {"startAt":0,"total":1,"comments":[
+              {"id":"12","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]}
+            ]}
+            """);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+
+        await client.DeleteWorklogAsync("SD-1", "42");
+
+        Assert.Equal("/rest/api/2/issue/SD-1/comment/12", handler.Requests[^2].PathAndQuery);
+        Assert.Equal("/rest/api/3/issue/SD-1/worklog/42?adjustEstimate=leave", handler.Requests[^1].PathAndQuery);
+    }
+
+    [Fact]
+    public async Task Delete_stops_before_any_changes_when_comment_pagination_is_inconsistent()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"startAt":0,"total":2,"comments":[
+              {"id":"12","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]}
+            ]}
+            """);
+        handler.Respond("""{"startAt":1,"total":1,"comments":[]}""");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.DeleteWorklogAsync("SD-1", "42"));
+
+        Assert.All(handler.Requests, request => Assert.Equal(HttpMethod.Get, request.Method));
     }
 
     [Fact]

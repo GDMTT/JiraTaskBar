@@ -58,6 +58,7 @@ public partial class AddWorklogWindow
         var asTicketComment = DescriptionTargetBox.SelectedIndex == 1;
         try
         {
+            string? worklogId;
             if (_original is { } original)
             {
                 var latest = await ReadUnchangedWorklogAsync(original);
@@ -69,9 +70,10 @@ public partial class AddWorklogWindow
                 var changedDescription = !asTicketComment && description != (original.Comment ?? string.Empty).Trim();
                 await _client.UpdateWorklogAsync(issue.Key, changedDescription
                     ? latest with { Comment = description, CommentDocument = null } : latest, started, seconds);
+                worklogId = latest.Id;
             }
             else
-                await _client.AddWorklogAsync(issue.Key, started, seconds,
+                worklogId = await _client.AddWorklogAsync(issue.Key, started, seconds,
                     asTicketComment || description.Length == 0 ? null : description);
             _worklogSaved = true;
             SavedIssue = issue;
@@ -80,8 +82,9 @@ public partial class AddWorklogWindow
             {
                 try
                 {
-                    // Internal is the safe default for Jira Service Management; other projects ignore it.
-                    await _client.AddCommentAsync(issue.Key, description, isInternal: true);
+                    if (worklogId is null)
+                        throw new InvalidOperationException("Jira did not return a worklog ID to link the comment.");
+                    await _client.AddWorklogCommentAsync(issue.Key, worklogId, description);
                 }
                 catch (Exception ex)
                 {
@@ -122,7 +125,8 @@ public partial class AddWorklogWindow
         SaveButton.IsEnabled = DeleteButton.IsEnabled = CancelButton.IsEnabled = false;
         try
         {
-            if (System.Windows.MessageBox.Show(this, $"Delete the worklog and its description from {original.IssueKey}?",
+            if (System.Windows.MessageBox.Show(this,
+                    $"Delete the worklog, its description, and any linked issue comments from {original.IssueKey}?",
                     "Delete worklog", MessageBoxButton.YesNo, MessageBoxImage.Warning,
                     MessageBoxResult.No) != MessageBoxResult.Yes) return;
 

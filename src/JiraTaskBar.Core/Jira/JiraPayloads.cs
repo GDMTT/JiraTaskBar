@@ -8,6 +8,7 @@ namespace JiraTaskBar.Core.Jira;
 public static class JiraPayloads
 {
     public const string ServiceDeskCommentProperty = "sd.public.comment";
+    internal const string WorklogCommentProperty = "jirataskbar.worklog";
 
     /// <summary>Jira expects e.g. 2026-10-28T09:12:00.000+1300 (offset without a colon).</summary>
     public static string FormatJiraDate(DateTimeOffset value)
@@ -40,18 +41,32 @@ public static class JiraPayloads
     /// The flag is always sent: a JSM comment without it is public (emailed to the customer),
     /// so omitting it would fail open. Other project types ignore it.
     /// </summary>
-    public static JsonObject Comment(string wikiMarkup, bool isInternal) => new()
+    public static JsonObject Comment(string wikiMarkup, bool isInternal, string? worklogId = null)
     {
-        ["body"] = wikiMarkup,
-        ["properties"] = new JsonArray
+        var properties = new JsonArray
         {
             new JsonObject
             {
                 ["key"] = ServiceDeskCommentProperty,
                 ["value"] = new JsonObject { ["internal"] = isInternal },
             },
-        },
-    };
+        };
+        if (worklogId is not null)
+        {
+            properties.Add(new JsonObject
+            {
+                ["key"] = WorklogCommentProperty,
+                ["value"] = new JsonObject { ["worklogId"] = worklogId },
+            });
+        }
+        return new JsonObject { ["body"] = wikiMarkup, ["properties"] = properties };
+    }
+
+    internal static bool IsLinkedWorklogComment(JsonObject comment, string worklogId) =>
+        comment["properties"] is JsonArray properties && properties.OfType<JsonObject>().Any(property =>
+            property["key"] is JsonValue key && key.TryGetValue<string>(out var name) && name == WorklogCommentProperty &&
+            property["value"] is JsonObject link && link["worklogId"] is JsonValue value &&
+            value.TryGetValue<string>(out var linkedId) && linkedId == worklogId);
 
     /// <summary>Minimal Atlassian Document Format document: one paragraph per line.</summary>
     public static JsonObject PlainTextAdf(string text)

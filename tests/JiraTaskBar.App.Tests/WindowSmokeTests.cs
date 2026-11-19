@@ -330,7 +330,7 @@ public class WindowSmokeTests
             Assert.Equal(600, client.UpdatedSeconds);
             Assert.Equal(original.Comment, client.Worklogs!.Single().Comment);
             Assert.Equal(original.CommentDocument, client.Worklogs!.Single().CommentDocument);
-            Assert.Equal((issue.Key, "Internal progress update", true), client.AddedComment);
+            Assert.Equal((issue.Key, "123", "Internal progress update"), client.AddedWorklogComment);
             calendar.UpdateLayout();
             Assert.Equal(offset, CalendarField<ScrollViewer>(calendar, "_timeScroll").VerticalOffset, 1);
 
@@ -448,7 +448,7 @@ public class WindowSmokeTests
         public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }
         public JiraWorklog? UpdatedWorklog { get; set; }
         public int UpdatedSeconds { get; private set; }
-        public (string IssueKey, string Text, bool Internal)? AddedComment { get; private set; }
+        public (string IssueKey, string WorklogId, string Text)? AddedWorklogComment { get; private set; }
         public JiraConnection Connection { get; } = new(new Uri("https://example.atlassian.net/"), "a@b.c", "t");
         public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
@@ -457,7 +457,7 @@ public class WindowSmokeTests
         public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) =>
             Worklogs is null ? throw new NotSupportedException() : Task.FromResult(Worklogs);
-        public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<string?> AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default)
         {
             UpdatedWorklog = worklog;
@@ -466,9 +466,10 @@ public class WindowSmokeTests
                 { Started = startedLocal, TimeSpentSeconds = timeSpentSeconds } : w).ToList();
             return Task.CompletedTask;
         }
-        public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default)
+        public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task AddWorklogCommentAsync(string issueKey, string worklogId, string wikiMarkup, CancellationToken ct = default)
         {
-            AddedComment = (issueKey, wikiMarkup, isInternal);
+            AddedWorklogComment = (issueKey, worklogId, wikiMarkup);
             return Task.CompletedTask;
         }
         public Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default) => throw new NotSupportedException();
