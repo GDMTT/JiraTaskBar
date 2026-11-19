@@ -51,6 +51,11 @@ Jira Cloud uses your Atlassian email and an [API token](https://id.atlassian.com
 
 A classic token still works, but Settings warns that it has full access to your account.
 
+The SLA indicator needs permission to view the Jira Service Management request. Atlassian lists
+`read:jira-work` as the classic scope for the [SLA endpoint](https://developer.atlassian.com/cloud/jira/service-desk/rest/api-group-request/#api-rest-servicedeskapi-request-issueidorkey-sla-get).
+If you use granular scopes, include `read:request.sla:jira-service-management`. Recreate a scoped token
+if its SLA scope is missing. When Jira does not make an SLA available, the indicator uses the due date.
+
 The site, email and token are stored together as a Generic Credential in Windows Credential Manager. Editing other files therefore can't redirect the token to a different site. Existing `credentials.bin` DPAPI data is migrated automatically and removed only after the new credential is verified. If you change the site in Settings, you must enter the token again.
 
 If Jira rejects the token (for example because it expired), the app asks once for a new one. Automatic refreshes pause until you enter it, and worklogs are kept and posted afterwards. Preferences, state and logs are stored in `%LOCALAPPDATA%\JiraTaskBar`.

@@ -121,7 +121,11 @@ public class JiraClientTests
             { Sla = await client.GetRequestSlaAsync("SD-2") };
         var urgency = DueDateProgress.CalculateUrgency(issue, DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
         Assert.Contains("Paused", urgency.Tooltip);
+        Assert.Contains("Remaining when checked at", urgency.Tooltip);
         Assert.Equal(0.5, urgency.RemainingFraction);
+        var stale = DueDateProgress.CalculateUrgency(issue, DateTimeOffset.UtcNow.AddMinutes(11), TimeZoneInfo.Utc);
+        Assert.Contains("Waiting for a fresh Jira reading", stale.Tooltip);
+        Assert.Null(stale.RemainingFraction);
     }
 
     [Fact]

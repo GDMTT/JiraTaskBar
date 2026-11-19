@@ -5,6 +5,8 @@ namespace JiraTaskBar.Core.Jira;
 public sealed record JiraSla(string Name, bool Completed, bool Breached, bool Paused,
     long? GoalMilliseconds, long? RemainingMilliseconds)
 {
+    public DateTimeOffset ObservedAt { get; init; }
+
     internal static JiraSla? Parse(JsonObject metric)
     {
         var ongoing = metric["ongoingCycle"] as JsonObject;

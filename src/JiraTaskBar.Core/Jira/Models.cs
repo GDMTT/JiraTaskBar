@@ -44,6 +44,7 @@ public sealed record JiraConnection(Uri SiteUrl, string Email, string ApiToken, 
 {
     /// <summary>The minimum classic scopes a scoped token needs for this app.</summary>
     public const string RequiredScopes = "read:jira-work, write:jira-work, read:jira-user";
+    public const string GranularSlaScope = "read:request.sla:jira-service-management";
 
     public const string GatewayHost = "api.atlassian.com";
 

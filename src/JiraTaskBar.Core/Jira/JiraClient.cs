@@ -156,7 +156,7 @@ public sealed class JiraClient : IJiraClient
             var response = await SendAsync(HttpMethod.Get, $"{path}?start={start}&limit=50", null, ct) as JsonObject;
             if (response?["values"] is not JsonArray { Count: > 0 } values) return null;
             foreach (var metric in values.OfType<JsonObject>())
-                if (JiraSla.Parse(metric) is { } sla) return sla;
+                if (JiraSla.Parse(metric) is { } sla) return sla with { ObservedAt = DateTimeOffset.UtcNow };
 
             if (response["isLastPage"] is not JsonValue last || !last.TryGetValue<bool>(out var isLast) || isLast)
                 return null;

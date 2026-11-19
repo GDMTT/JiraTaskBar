@@ -124,31 +124,32 @@ public sealed partial class BarViewModel : ObservableObject
     private async Task LoadSlasAsync(IJiraClient client, IReadOnlyList<JiraIssue> issues)
     {
         var result = issues.ToArray();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var options = new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = timeout.Token };
-        try
-        {
-            await Parallel.ForEachAsync(Enumerable.Range(0, result.Length).Where(i => result[i].IsServiceDesk),
-                options, async (index, ct) =>
+        var options = new ParallelOptions { MaxDegreeOfParallelism = 4 };
+        await Parallel.ForEachAsync(Enumerable.Range(0, result.Length).Where(i => result[i].IsServiceDesk),
+            options, async (index, ct) =>
+            {
+                if (!ReferenceEquals(client, _app.Client)) return;
+                var issue = result[index];
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(12));
+                try
                 {
-                    var issue = result[index];
-                    try
-                    {
-                        var sla = await client.GetRequestSlaAsync(issue.Key, ct);
-                        result[index] = issue with { Sla = sla };
-                    }
-                    catch (JiraApiException ex) when (ex.StatusCode is 401 or 403 or 404)
-                    {
-                        result[index] = issue with { Sla = null };
-                    }
-                    catch (Exception ex) when (ex is JiraApiException or HttpRequestException)
-                    {
-                        // SLA availability must not interrupt the issue refresh or erase the last known status.
-                        Log.Error($"Could not load SLA for {issue.Key}", ex);
-                    }
-                });
-        }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
+                    var sla = await client.GetRequestSlaAsync(issue.Key, timeout.Token);
+                    result[index] = issue with { Sla = sla };
+                }
+                catch (JiraApiException ex) when (ex.StatusCode is 401 or 403 or 404)
+                {
+                    result[index] = issue with { Sla = null };
+                }
+                catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+                {
+                    // A slow request must leave capacity for the next ticket.
+                }
+                catch (Exception ex) when (ex is JiraApiException or HttpRequestException)
+                {
+                    Log.Error($"Could not load SLA for {issue.Key}", ex);
+                }
+            });
 
         if (!ReferenceEquals(client, _app.Client) || result.SequenceEqual(issues)) return;
         _lastIssues = result;

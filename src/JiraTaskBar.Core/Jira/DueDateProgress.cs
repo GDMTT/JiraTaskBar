@@ -20,6 +20,8 @@ public static class DueDateProgress
         };
         var tooltip = $"{sla.Name} (SLA): {status}";
         double? fraction = null;
+        if (!sla.Completed && !sla.Breached && now - sla.ObservedAt >= TimeSpan.FromMinutes(10))
+            return new(kind, null, $"{sla.Name} (SLA): Waiting for a fresh Jira reading");
         if (!sla.Completed && sla.RemainingMilliseconds is { } remaining)
         {
             if (sla.GoalMilliseconds is > 0 and var goal)
@@ -27,7 +29,8 @@ public static class DueDateProgress
             if (remaining >= 0 && remaining < TimeSpan.MaxValue.TotalMilliseconds)
             {
                 var duration = TimeSpan.FromMilliseconds((double)remaining);
-                tooltip += $"\nRemaining: {(int)duration.TotalDays}d {duration.Hours}h {duration.Minutes}m {duration.Seconds}s";
+                tooltip += $"\nRemaining when checked at {sla.ObservedAt.UtcDateTime:HH:mm:ss} UTC: " +
+                    $"{(int)duration.TotalDays}d {duration.Hours}h {duration.Minutes}m {duration.Seconds}s";
             }
         }
         return new(kind, fraction, tooltip);
