@@ -3,6 +3,7 @@ using System.Runtime.ExceptionServices;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -137,6 +138,27 @@ public class WindowSmokeTests
             var contextReport = new ContextReportWindow(controller.ContextHistory);
             contextReport.Show();
             contextReport.UpdateLayout();
+            var fromDate = (ContextDatePicker)contextReport.FindName("FromDate");
+            var toDate = (ContextDatePicker)contextReport.FindName("ToDate");
+            var fromEditor = (DatePickerTextBox)fromDate.Template.FindName("PART_TextBox", fromDate);
+            var toEditor = (DatePickerTextBox)toDate.Template.FindName("PART_TextBox", toDate);
+            fromDate.SelectedDate = new DateTime(2026, 11, 3);
+            toDate.SelectedDate = new DateTime(2026, 11, 9);
+            Assert.Equal(@"03\11\2026", fromEditor.Text);
+            Assert.Equal(@"09\11\2026", toEditor.Text);
+
+            fromEditor.Text = @"05\11\2026";
+            var source = PresentationSource.FromVisual(fromEditor)!;
+            fromEditor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent
+            });
+            fromEditor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.KeyDownEvent
+            });
+            Assert.Equal(new DateTime(2026, 11, 5), fromDate.SelectedDate);
+            Assert.Equal(@"05\11\2026", fromEditor.Text);
             contextReport.Close();
 
             foreach (var resolution in WorklogCalendarLayout.SupportedResolutions)
