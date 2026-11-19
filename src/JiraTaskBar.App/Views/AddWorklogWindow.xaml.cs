@@ -58,7 +58,8 @@ public partial class AddWorklogWindow
         var asTicketComment = DescriptionTargetBox.SelectedIndex == 1;
         try
         {
-            string? worklogId;
+            string? worklogId = null;
+            var postLinkedComment = asTicketComment && description.Length > 0;
             if (_original is { } original)
             {
                 var latest = await ReadUnchangedWorklogAsync(original);
@@ -72,13 +73,14 @@ public partial class AddWorklogWindow
                     ? latest with { Comment = description, CommentDocument = null } : latest, started, seconds);
                 worklogId = latest.Id;
             }
+            else if (postLinkedComment)
+                worklogId = await _client.AddWorklogWithIdAsync(issue.Key, started, seconds);
             else
-                worklogId = await _client.AddWorklogAsync(issue.Key, started, seconds,
-                    asTicketComment || description.Length == 0 ? null : description);
+                await _client.AddWorklogAsync(issue.Key, started, seconds, description);
             _worklogSaved = true;
             SavedIssue = issue;
 
-            if (asTicketComment && description.Length > 0)
+            if (postLinkedComment)
             {
                 try
                 {

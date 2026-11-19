@@ -12,12 +12,13 @@ public interface IJiraClient
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
-    Task<string?> AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
+    Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
     Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
         int timeSpentSeconds, CancellationToken ct = default);
     Task DeleteWorklogAsync(string issueKey, string worklogId, CancellationToken ct = default);
     Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default);
     Task AddWorklogCommentAsync(string issueKey, string worklogId, string wikiMarkup, CancellationToken ct = default);
+    Task<string?> AddWorklogWithIdAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default);
     /// <returns>The filename Jira stored the attachment under.</returns>
     Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default);
     /// <summary>The issue type's icon as PNG bytes, or null if Jira didn't return a usable PNG.</summary>
@@ -149,13 +150,19 @@ public sealed class JiraClient : IJiraClient
         return IssueOrdering.Sort(all);
     }
 
-    public async Task<string?> AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default)
+    public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) =>
+        PostWorklogAsync(issueKey, startedLocal, timeSpentSeconds, comment, ct);
+
+    public async Task<string?> AddWorklogWithIdAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default)
     {
-        var response = await SendAsync(HttpMethod.Post, $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog",
-            JiraPayloads.Worklog(startedLocal, timeSpentSeconds, comment), ct);
+        var response = await PostWorklogAsync(issueKey, startedLocal, timeSpentSeconds, null, ct);
         return (response as JsonObject)?["id"] is JsonValue value &&
             value.TryGetValue<string>(out var id) && IsNumericId(id) ? id : null;
     }
+
+    private Task<JsonNode?> PostWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds,
+        string? comment, CancellationToken ct) => SendAsync(HttpMethod.Post,
+        $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog", JiraPayloads.Worklog(startedLocal, timeSpentSeconds, comment), ct);
 
     public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
         int timeSpentSeconds, CancellationToken ct = default)

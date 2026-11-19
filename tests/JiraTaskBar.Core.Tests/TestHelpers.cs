@@ -95,7 +95,7 @@ public sealed class FakeJiraClient : IJiraClient
     public List<(string Key, DateTimeOffset Started, int Seconds)> Worklogs { get; } = [];
     public int FailuresRemaining { get; set; }
 
-    public Task<string?> AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default)
+    public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default)
     {
         if (FailuresRemaining > 0)
         {
@@ -103,7 +103,7 @@ public sealed class FakeJiraClient : IJiraClient
             throw new HttpRequestException("network down");
         }
         Worklogs.Add((issueKey, startedLocal, timeSpentSeconds));
-        return Task.FromResult<string?>(Worklogs.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return Task.CompletedTask;
     }
 
     public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
@@ -118,6 +118,7 @@ public sealed class FakeJiraClient : IJiraClient
     public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) => throw new NotSupportedException();
     public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) => throw new NotSupportedException();
     public Task AddWorklogCommentAsync(string issueKey, string worklogId, string wikiMarkup, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<string?> AddWorklogWithIdAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default) => throw new NotSupportedException();
     public Task DeleteWorklogAsync(string issueKey, string worklogId, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<byte[]?> GetIssueTypeIconAsync(string avatarId, CancellationToken ct = default) => throw new NotSupportedException();

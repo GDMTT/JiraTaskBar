@@ -350,7 +350,7 @@ public class JiraClientTests
 
         await client.DeleteWorklogAsync("SD-1", "42");
 
-        var request = Assert.Single(handler.Requests.Where(item => item.Method == HttpMethod.Delete));
+        var request = Assert.Single(handler.Requests, item => item.Method == HttpMethod.Delete);
         Assert.Equal(HttpMethod.Delete, request.Method);
         Assert.Equal("/rest/api/3/issue/SD-1/worklog/42?adjustEstimate=leave", request.PathAndQuery);
         await Assert.ThrowsAsync<ArgumentException>(() => client.DeleteWorklogAsync("SD-1", "42/43"));
@@ -363,7 +363,7 @@ public class JiraClientTests
         handler.Respond("""{"id":"42"}""", HttpStatusCode.Created);
         handler.Respond("""{"id":"11"}""", HttpStatusCode.Created);
 
-        var worklogId = await client.AddWorklogAsync("SD-1", DateTimeOffset.UtcNow, 60);
+        var worklogId = await client.AddWorklogWithIdAsync("SD-1", DateTimeOffset.UtcNow, 60);
         Assert.Equal("42", worklogId);
         await client.AddWorklogCommentAsync("SD-1", worklogId!, "Progress");
 
