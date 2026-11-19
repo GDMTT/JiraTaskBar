@@ -88,6 +88,7 @@
                             <DockPanel>
                                 <views:DueDateIndicator DockPanel.Dock="Left" Width="16" Height="16" Margin="0,0,5,0"
                                                         State="{Binding DueState}" ToolTip="{Binding DueState.Tooltip}"
+                                                        Visibility="{Binding HasUrgency, Converter={StaticResource BoolToVisibility}}"
                                                         AutomationProperties.Name="{Binding DueState.Tooltip}" />
                                 <ContentPresenter DockPanel.Dock="Left" Content="{Binding}" ContentTemplate="{StaticResource TypeIconTemplate}"
                                                   Margin="0,0,5,0" VerticalAlignment="Center" />

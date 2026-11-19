@@ -80,6 +80,55 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Request_sla_keeps_the_latest_completed_cycle_ahead_of_the_due_date()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"values":[{"name":"Unavailable","completedCycles":[]}],"isLastPage":false}""");
+        handler.Respond("""
+            {"values":[{"name":"Time to resolution","completedCycles":[
+                {"stopTime":{"epochMillis":2000},"breached":false},
+                {"stopTime":{"epochMillis":1000},"breached":true}
+            ]}],"isLastPage":true}
+            """);
+
+        var sla = await client.GetRequestSlaAsync("SD-2");
+        Assert.Equal("/rest/servicedeskapi/request/SD-2/sla?start=0&limit=50", handler.Requests[0].PathAndQuery);
+        Assert.Contains("start=1", handler.Requests[1].PathAndQuery);
+        var issue = new JiraIssue("SD-2", "Ticket", null, "Done", "service_desk", "Task",
+            DueDate: new DateOnly(2026, 11, 1)) { Sla = sla };
+        var now = new DateTimeOffset(2026, 11, 19, 0, 0, 0, TimeSpan.Zero);
+        var urgency = DueDateProgress.CalculateUrgency(issue, now, TimeZoneInfo.Utc);
+        Assert.Equal(DueDateKind.Met, urgency.Kind);
+        Assert.Equal("Time to resolution (SLA): Met", urgency.Tooltip);
+        var breached = issue with { Sla = Assert.IsType<JiraSla>(sla) with { Breached = true } };
+        Assert.Equal("Time to resolution (SLA): Breached",
+            DueDateProgress.CalculateUrgency(breached, now, TimeZoneInfo.Utc).Tooltip);
+        Assert.Equal(DueDateKind.Overdue, DueDateProgress.CalculateUrgency(issue with { Sla = null }, now, TimeZoneInfo.Utc).Kind);
+        Assert.Equal(DueDateKind.None,
+            DueDateProgress.CalculateUrgency(issue with { Sla = null, DueDate = null }, now, TimeZoneInfo.Utc).Kind);
+    }
+
+    [Fact]
+    public async Task Ongoing_sla_supersedes_past_cycles_and_preserves_paused_state()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"values":[{"name":"Response","ongoingCycle":{"breached":false,"withinCalendarHours":false,
+                "goalDuration":{"millis":600000},"remainingTime":{"millis":300000}},
+                "completedCycles":[{"breached":true}]}],"isLastPage":true}
+            """);
+        var issue = new JiraIssue("SD-2", "Ticket", null, "Open", "service_desk", "Task")
+            { Sla = await client.GetRequestSlaAsync("SD-2") };
+        var urgency = DueDateProgress.CalculateUrgency(issue, DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
+        Assert.Contains("Paused", urgency.Tooltip);
+        Assert.Contains("Remaining when checked at", urgency.Tooltip);
+        Assert.Equal(0.5, urgency.RemainingFraction);
+        var stale = DueDateProgress.CalculateUrgency(issue, DateTimeOffset.UtcNow.AddMinutes(11), TimeZoneInfo.Utc);
+        Assert.Contains("Waiting for a fresh Jira reading", stale.Tooltip);
+        Assert.Null(stale.RemainingFraction);
+    }
+
+    [Fact]
     public async Task Worklog_payload_uses_jira_date_format()
     {
         var (client, handler) = Create();
@@ -339,6 +388,115 @@ public class JiraClientTests
     {
         Assert.Throws<ArgumentException>(() => new JiraClient(new HttpClient(new FakeHandler()),
             new JiraConnection(new Uri("http://acme.atlassian.net/"), "me@acme.com", "secret")));
+    }
+
+    [Fact]
+    public async Task Deletes_one_worklog_without_changing_the_remaining_estimate()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"startAt":0,"total":1,"comments":[{"id":"10","body":"Older unlinked comment"}]}""");
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+
+        await client.DeleteWorklogAsync("SD-1", "42");
+
+        var request = Assert.Single(handler.Requests, item => item.Method == HttpMethod.Delete);
+        Assert.Equal(HttpMethod.Delete, request.Method);
+        Assert.Equal("/rest/api/3/issue/SD-1/worklog/42?adjustEstimate=leave", request.PathAndQuery);
+        await Assert.ThrowsAsync<ArgumentException>(() => client.DeleteWorklogAsync("SD-1", "42/43"));
+    }
+
+    [Fact]
+    public async Task Creates_the_worklog_comment_with_its_exact_id_and_internal_visibility()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"id":"42"}""", HttpStatusCode.Created);
+        handler.Respond("""{"id":"11"}""", HttpStatusCode.Created);
+
+        var worklogId = await client.AddWorklogWithIdAsync("SD-1", DateTimeOffset.UtcNow, 60);
+        Assert.Equal("42", worklogId);
+        await client.AddWorklogCommentAsync("SD-1", worklogId!, "Progress");
+
+        var request = handler.Requests[1];
+        var properties = JsonNode.Parse(request.Body!)!["properties"]!.AsArray();
+        Assert.Equal("/rest/api/2/issue/SD-1/comment", request.PathAndQuery);
+        Assert.Contains(properties, property => property!["key"]!.GetValue<string>() == "sd.public.comment" &&
+            property["value"]!["internal"]!.GetValue<bool>());
+        Assert.Contains(properties, property => property!["key"]!.GetValue<string>() == "jirataskbar.worklog" &&
+            property["value"]!["worklogId"]!.GetValue<string>() == worklogId);
+    }
+
+    [Fact]
+    public async Task Delete_only_removes_comments_explicitly_linked_to_that_worklog_across_pages()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"startAt":0,"total":3,"comments":[
+              {"id":"10","body":"Same text","properties":[{"key":"sd.public.comment","value":{"internal":true}}]},
+              {"id":"11","body":"Same text","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"99"}}]}
+            ]}
+            """);
+        handler.Respond("""
+            {"startAt":2,"total":3,"comments":[
+              {"id":"12","body":"Same text","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]}
+            ]}
+            """);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+
+        await client.DeleteWorklogAsync("SD-1", "42");
+
+        Assert.Contains("expand=properties", handler.Requests[0].PathAndQuery);
+        Assert.Contains("startAt=2", handler.Requests[1].PathAndQuery);
+        Assert.Equal(
+            ["/rest/api/2/issue/SD-1/comment/12", "/rest/api/3/issue/SD-1/worklog/42?adjustEstimate=leave"],
+            handler.Requests.Where(item => item.Method == HttpMethod.Delete).Select(item => item.PathAndQuery));
+    }
+
+    [Fact]
+    public async Task Failed_linked_comment_deletion_keeps_the_worklog_available_for_retry()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"startAt":0,"total":2,"comments":[
+              {"id":"11","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]},
+              {"id":"12","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]}
+            ]}
+            """);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+        handler.Respond("""{"errorMessages":["Missing permission"]}""", HttpStatusCode.Forbidden);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.DeleteWorklogAsync("SD-1", "42"));
+        Assert.Contains("Jira deleted 1 linked comment", error.Message);
+        Assert.DoesNotContain(handler.Requests, item => item.Method == HttpMethod.Delete && item.PathAndQuery.Contains("/worklog/"));
+
+        handler.Respond("""
+            {"startAt":0,"total":1,"comments":[
+              {"id":"12","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]}
+            ]}
+            """);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+        handler.Respond(string.Empty, HttpStatusCode.NoContent);
+
+        await client.DeleteWorklogAsync("SD-1", "42");
+
+        Assert.Equal("/rest/api/2/issue/SD-1/comment/12", handler.Requests[^2].PathAndQuery);
+        Assert.Equal("/rest/api/3/issue/SD-1/worklog/42?adjustEstimate=leave", handler.Requests[^1].PathAndQuery);
+    }
+
+    [Fact]
+    public async Task Delete_stops_before_any_changes_when_comment_pagination_is_inconsistent()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"startAt":0,"total":2,"comments":[
+              {"id":"12","properties":[{"key":"jirataskbar.worklog","value":{"worklogId":"42"}}]}
+            ]}
+            """);
+        handler.Respond("""{"startAt":1,"total":1,"comments":[]}""");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.DeleteWorklogAsync("SD-1", "42"));
+
+        Assert.All(handler.Requests, request => Assert.Equal(HttpMethod.Get, request.Method));
     }
 
     [Fact]

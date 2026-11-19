@@ -40,6 +40,7 @@ public sealed class AppController : IDisposable
     private TaskbarIcon? _tray;
     private BarWindow? _bar;
     private ContextReportWindow? _contextReportWindow;
+    private AboutWindow? _aboutWindow;
     private DateTimeOffset _lastHeartbeat;
     private DateTimeOffset? _awaySinceUtc;
     private bool _awayPromptOpen;
@@ -72,6 +73,7 @@ public sealed class AppController : IDisposable
         {
             Bar.SyncActive();
             UpdateTrayTooltip();
+            _worklogWindow?.RefreshLocalEntries();
         };
         Worklogs.QueueChanged += (_, _) => RefreshPendingWorklogState();
     }
@@ -328,7 +330,7 @@ public sealed class AppController : IDisposable
         }
 
         _worklogWindow = new WorklogCalendarWindow(ticket.Issue, Client, () => Worklogs.Pending,
-            () => Bar.CalendarIssues, Settings.CalendarResolutionMinutes);
+            () => Bar.CalendarIssues, Settings.CalendarResolutionMinutes, () => Tracker.Active, () => Settings);
         _worklogWindow.Closed += (_, _) => _worklogWindow = null;
         _worklogWindow.Show();
     }
@@ -373,6 +375,7 @@ public sealed class AppController : IDisposable
         }
 
         Bar.PendingWorklogs = Worklogs.PendingCount;
+        _worklogWindow?.RefreshLocalEntries();
         RefreshWorklogCalendars();
     }
 
@@ -585,6 +588,7 @@ public sealed class AppController : IDisposable
         menu.Items.Add(startup);
 
         menu.Items.Add(Item("Open data folder", null, () => Shell.OpenFolder(AppPaths.DataDirectory)));
+        menu.Items.Add(Item("About…", null, OpenAbout));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Exit", SymbolRegular.Power24, () => _ = ExitAsync()));
     }
@@ -646,6 +650,19 @@ public sealed class AppController : IDisposable
 
     private void OpenSettings() => OpenSettings(message: null);
 
+    private void OpenAbout()
+    {
+        if (_aboutWindow is not null)
+        {
+            _aboutWindow.Activate();
+            return;
+        }
+
+        _aboutWindow = new AboutWindow();
+        _aboutWindow.Closed += (_, _) => _aboutWindow = null;
+        _aboutWindow.Show();
+    }
+
     private void OpenContextReport()
     {
         if (_contextReportWindow is not null)
@@ -681,6 +698,7 @@ public sealed class AppController : IDisposable
         if (window.ShowDialog() != true || window.Credentials is not { } credentials) return false;
 
         Settings = window.Result;
+        _worklogWindow?.RefreshLocalEntries();
         _secrets.Save(credentials);
         _credentials = credentials;
         IsAuthFailed = false;
@@ -824,6 +842,7 @@ public sealed class AppController : IDisposable
         foreach (var w in _commentWindows.Values.ToList()) w.ForceClose();
         _worklogWindow?.Close();
         _contextReportWindow?.Close();
+        _aboutWindow?.Close();
         _bar?.Close();
         _app.Shutdown();
     }

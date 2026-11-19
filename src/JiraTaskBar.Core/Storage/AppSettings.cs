@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 namespace JiraTaskBar.Core.Storage;
 
 public enum DockEdge { Floating, Left, Top, Right, Bottom }
+public sealed record WorklogTypeColor(string Project, string IssueType, string Color);
 
 public enum ShortSessionMode
 {
@@ -35,6 +36,8 @@ public sealed class AppSettings
     public int IdlePromptMinutes { get; set; } = 10;
     /// <summary>Minute interval used to divide and snap the Day/Week worklog calendar.</summary>
     public int CalendarResolutionMinutes { get; set; } = 30;
+    public int? DailyWorklogTargetMinutes { get; set; }
+    public List<WorklogTypeColor> WorklogTypeColors { get; set; } = [];
     public bool StartWithWindows { get; set; }
 
     /// <summary>Exclude the bar (and its tooltips/menus) from screen sharing, screenshots and recordings.</summary>

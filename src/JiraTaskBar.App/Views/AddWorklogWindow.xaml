@@ -54,6 +54,8 @@
 
             <ui:InfoBar x:Name="Status" Grid.Row="5" Grid.ColumnSpan="4" IsClosable="False" IsOpen="False" Margin="0,0,0,12" />
             <DockPanel Grid.Row="6" Grid.ColumnSpan="4" LastChildFill="False">
+                <ui:Button x:Name="DeleteButton" Content="Delete worklog…" Appearance="Danger"
+                           Visibility="Collapsed" DockPanel.Dock="Left" Click="Delete_Click" />
                 <ui:Button x:Name="CancelButton" Content="Cancel" DockPanel.Dock="Right" Margin="8,0,0,0" Click="Cancel_Click" />
                 <ui:Button x:Name="SaveButton" Content="Save" Appearance="Primary" DockPanel.Dock="Right"
                            IsDefault="True" Click="Save_Click" />

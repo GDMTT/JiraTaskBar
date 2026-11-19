@@ -44,6 +44,11 @@
                 Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
             <DockPanel>
                 <TextBlock x:Name="ResolutionText" DockPanel.Dock="Right" Opacity="0.65" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0">
+                    <Label Content="_Highlight" Target="{Binding ElementName=HighlightIssueBox}" Padding="0,0,8,0"
+                           VerticalAlignment="Center" />
+                    <ComboBox x:Name="HighlightIssueBox" Width="150" SelectionChanged="Highlight_Changed" />
+                </StackPanel>
                 <TextBlock x:Name="StatusText" Opacity="0.75" Text="Loading Jira worklogs…" />
             </DockPanel>
         </Border>
@@ -55,8 +60,6 @@
 
         <DockPanel Grid.Row="4" LastChildFill="False" Margin="20,0,20,18">
             <TextBlock x:Name="RangeTotal" VerticalAlignment="Center" FontWeight="SemiBold" />
-            <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Opacity="0.6"
-                       Text="The selected ticket is blue; other Jira worklogs are slate; pending local worklogs are amber." />
             <ui:Button DockPanel.Dock="Right" Content="Close" Click="Close_Click" />
         </DockPanel>
     </Grid>

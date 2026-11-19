@@ -20,6 +20,7 @@ public sealed record JiraIssue(
     public bool IsServiceDesk => string.Equals(ProjectTypeKey, "service_desk", StringComparison.OrdinalIgnoreCase);
 
     public int PriorityRank => Priority?.Rank ?? int.MaxValue;
+    public JiraSla? Sla { get; init; }
 }
 
 public sealed record JiraUser(string AccountId, string DisplayName, string? EmailAddress);
@@ -43,6 +44,7 @@ public sealed record JiraConnection(Uri SiteUrl, string Email, string ApiToken, 
 {
     /// <summary>The minimum classic scopes a scoped token needs for this app.</summary>
     public const string RequiredScopes = "read:jira-work, write:jira-work, read:jira-user";
+    public const string GranularSlaScope = "read:request.sla:jira-service-management";
 
     public const string GatewayHost = "api.atlassian.com";
 

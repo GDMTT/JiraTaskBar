@@ -3,6 +3,7 @@ using System.Runtime.ExceptionServices;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -28,8 +29,11 @@ public class WindowSmokeTests
         RunOnSta(() =>
         {
             AppPaths.DataDirectory = Path.Combine(Path.GetTempPath(), "JiraTaskBarSmoke", Guid.NewGuid().ToString("N"));
-            var app = new App();
-            app.InitializeComponent();
+            var app = new SmokeTestApp();
+            app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ThemesDictionary { Theme = Wpf.Ui.Appearance.ApplicationTheme.Dark });
+            app.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ControlsDictionary());
+            app.Resources.Add("BoolToVisibility", new BooleanToVisibilityConverter());
+            app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
             var controller = new AppController(app);
             var issue = new JiraIssue("SD-42", "Printer on fire", new JiraPriority("1", "1 - Critical", 1), "Waiting", "service_desk", "Incident");
@@ -137,7 +141,23 @@ public class WindowSmokeTests
             var contextReport = new ContextReportWindow(controller.ContextHistory);
             contextReport.Show();
             contextReport.UpdateLayout();
+            var fromDate = (ContextDatePicker)contextReport.FindName("FromDate");
+            var toDate = (ContextDatePicker)contextReport.FindName("ToDate");
+            var fromEditor = (DatePickerTextBox)fromDate.Template.FindName("PART_TextBox", fromDate);
+            var toEditor = (DatePickerTextBox)toDate.Template.FindName("PART_TextBox", toDate);
+            fromDate.SelectedDate = new DateTime(2026, 11, 3);
+            toDate.SelectedDate = new DateTime(2026, 11, 9);
+            Assert.Equal(@"03\11\2026", fromEditor.Text);
+            Assert.Equal(@"09\11\2026", toEditor.Text);
             contextReport.Close();
+
+            var aboutItem = controller.BuildMenu().Items.OfType<MenuItem>().Single(item => Equals(item.Header, "About…"));
+            aboutItem.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            var about = Assert.Single(app.Windows.OfType<AboutWindow>());
+            Assert.Equal("Jira TaskBar", ((TextBlock)about.FindName("ProductName")).Text);
+            Assert.Matches(@"^Version: \d+\.\d+\.\d+", ((TextBlock)about.FindName("ReleaseVersion")).Text);
+            Assert.EndsWith(" UTC", ((TextBlock)about.FindName("BuildTime")).Text);
+            about.Close();
 
             foreach (var resolution in WorklogCalendarLayout.SupportedResolutions)
             {
@@ -150,6 +170,7 @@ public class WindowSmokeTests
                 Assert.False(CalendarField<DispatcherTimer>(worklogCalendar, "_currentTimeTimer").IsEnabled);
             }
             AssertCalendarWorklogsStayInDayColumns(issue);
+            AssertSyncedOvernightWorklogKeepsItsDaySegment(issue);
 
             var addWorklog = new AddWorklogWindow([issue], issue, DateTimeOffset.Now,
                 TimeSpan.FromMinutes(30), new NullJiraClient());
@@ -186,6 +207,33 @@ public class WindowSmokeTests
         });
     }
 
+    private static void AssertSyncedOvernightWorklogKeepsItsDaySegment(JiraIssue issue)
+    {
+        const string outsideQuery = "OTHER-42";
+        var started = new DateTimeOffset(DateTime.Today.AddHours(-1));
+        var pending = new List<PendingWorklog> { new(Guid.NewGuid(), outsideQuery, started, 7200, "", 0) };
+        var client = new NullJiraClient { Worklogs = [] };
+        var calendar = new WorklogCalendarWindow(issue, client, () => pending);
+        try
+        {
+            calendar.Show();
+            ((ComboBox)calendar.FindName("ViewModeBox")).SelectedIndex = (int)WorklogCalendarView.Day;
+            Assert.Contains("1:00:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+
+            pending.Clear();
+            client.Worklogs = [new("11", outsideQuery, started, 7200, "Tester", null)];
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            var grid = CalendarField<Grid>(calendar, "_timeGrid");
+            var overlay = Assert.Single(grid.Children.OfType<Grid>());
+            var block = Assert.Single(Assert.Single(overlay.Children.OfType<Grid>()).Children.OfType<Border>());
+            Assert.Contains("Click to edit the full worklog", Assert.IsType<string>(block.ToolTip));
+            Assert.Contains("1:00:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+            Assert.Same(System.Windows.Media.Brushes.Black,
+                WorklogCalendarWindow.WorklogTextBrush(System.Windows.Media.Color.FromRgb(0, 170, 0)));
+        }
+        finally { calendar.Close(); }
+    }
+
     private static void AssertCalendarWorklogsStayInDayColumns(JiraIssue issue)
     {
         var today = DateOnly.FromDateTime(DateTime.Today);
@@ -195,7 +243,15 @@ public class WindowSmokeTests
             .Select(lane => new PendingWorklog(Guid.NewGuid(), issue.Key,
                 new DateTimeOffset(start.AddDays(day).ToDateTime(new TimeOnly(9, lane * 10))).ToUniversalTime(),
                 3600, new string('W', 200), 0))).ToList();
-        var calendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => pending);
+        var now = DateTimeOffset.UtcNow;
+        var active = new ActiveSession(issue.Key, now.AddMinutes(-2), now);
+        var settings = new AppSettings
+        {
+            DailyWorklogTargetMinutes = 60,
+            WorklogTypeColors = [new("SD", issue.IssueType, "#203050")],
+        };
+        var calendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => pending,
+            active: () => active, settings: () => settings);
         try
         {
             calendar.Show();
@@ -207,11 +263,28 @@ public class WindowSmokeTests
                     calendar.Width = width;
                     calendar.UpdateLayout();
                     var host = (Grid)calendar.FindName("SchedulerHost");
-                    var scroll = Assert.IsType<ScrollViewer>(Assert.Single(host.Children.Cast<UIElement>()));
+                    var layout = Assert.IsType<DockPanel>(Assert.Single(host.Children.Cast<UIElement>()));
+                    var headings = Assert.IsType<Grid>(layout.Children[0]);
+                    var totals = Assert.IsType<Grid>(layout.Children[1]);
+                    var scroll = Assert.IsType<ScrollViewer>(layout.Children[2]);
                     var grid = Assert.IsType<Grid>(scroll.Content);
                     var overlay = Assert.Single(grid.Children.OfType<Grid>());
                     var days = grid.ColumnDefinitions.Count - 1;
                     Assert.Equal(days, overlay.ColumnDefinitions.Count);
+                    Assert.Equal(grid.ActualWidth, headings.ActualWidth, 1);
+                    Assert.Equal(grid.ActualWidth, totals.ActualWidth, 1);
+                    Assert.Equal(days, headings.Children.Count);
+                    Assert.Equal(days + 1, totals.Children.Count);
+                    Assert.Contains(overlay.Children.OfType<Grid>().SelectMany(entry => entry.Children.OfType<Border>()),
+                        block => block.ToolTip is string text && text.Contains("Running timer", StringComparison.Ordinal));
+                    if (mode == 1)
+                    {
+                        var oneLogDay = Enumerable.Range(0, 7).First(day => day % 2 == 0 && start.AddDays(day) != today);
+                        var total = Assert.IsType<Border>(totals.Children[oneLogDay + 1]);
+                        var run = Assert.IsType<System.Windows.Documents.Run>(Assert.IsType<TextBlock>(total.Child).Inlines.FirstInline);
+                        Assert.Equal("1:00:00", run.Text);
+                        Assert.Same(System.Windows.Media.Brushes.DarkGreen, run.Foreground);
+                    }
                     Assert.True(grid.ActualWidth <= scroll.ViewportWidth + 0.1,
                         "Long worklog text must not expand the calendar beyond the viewport.");
                     Assert.NotEmpty(overlay.Children.Cast<UIElement>());
@@ -227,8 +300,10 @@ public class WindowSmokeTests
                         Assert.InRange(block.ActualWidth, column.ActualWidth / entryHost.ColumnDefinitions.Count - 5,
                             column.ActualWidth / entryHost.ColumnDefinitions.Count - 3);
                     }
+                    var headingTop = headings.TranslatePoint(new Point(0, 0), host).Y;
                     scroll.ScrollToVerticalOffset(543);
                     calendar.UpdateLayout();
+                    Assert.Equal(headingTop, headings.TranslatePoint(new Point(0, 0), host).Y);
                     var offset = scroll.VerticalOffset;
                     typeof(WorklogCalendarWindow).GetMethod("RenderScheduler", BindingFlags.Instance | BindingFlags.NonPublic)!
                         .Invoke(calendar, [false]);
@@ -300,7 +375,7 @@ public class WindowSmokeTests
             Assert.Equal(600, client.UpdatedSeconds);
             Assert.Equal(original.Comment, client.Worklogs!.Single().Comment);
             Assert.Equal(original.CommentDocument, client.Worklogs!.Single().CommentDocument);
-            Assert.Equal((issue.Key, "Internal progress update", true), client.AddedComment);
+            Assert.Equal((issue.Key, "123", "Internal progress update"), client.AddedWorklogComment);
             calendar.UpdateLayout();
             Assert.Equal(offset, CalendarField<ScrollViewer>(calendar, "_timeScroll").VerticalOffset, 1);
 
@@ -393,6 +468,64 @@ public class WindowSmokeTests
         Assert.Equal(3, Grid.GetColumn(line));
     }
 
+    [Fact]
+    public void Context_date_picker_commits_backslash_dates()
+    {
+        RunOnSta(() =>
+        {
+            var picker = new ContextDatePicker
+            {
+                Language = System.Windows.Markup.XmlLanguage.GetLanguage("en-GB"),
+                SelectedDateFormat = DatePickerFormat.Short,
+                SelectedDate = new DateTime(2026, 11, 3)
+            };
+            using var source = new HwndSource(new HwndSourceParameters("Context date picker test")
+            {
+                Width = 200,
+                Height = 60
+            });
+            var next = new System.Windows.Controls.Button();
+            source.RootVisual = new StackPanel { Children = { picker, next } };
+            picker.ApplyTemplate();
+            var editor = (DatePickerTextBox)picker.Template.FindName("PART_TextBox", picker);
+            Assert.Equal(@"03\11\2026", editor.Text);
+
+            editor.Text = @"05\11\2026";
+            var menu = new ContextMenu();
+            Assert.True(FocusManager.GetIsFocusScope(menu));
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, editor, menu)
+            {
+                RoutedEvent = Keyboard.PreviewLostKeyboardFocusEvent
+            });
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, menu, editor)
+            {
+                RoutedEvent = Keyboard.PreviewGotKeyboardFocusEvent
+            });
+            Assert.Equal(@"05\11\2026", editor.Text);
+            Assert.Equal(new DateTime(2026, 11, 3), picker.SelectedDate);
+
+            editor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent
+            });
+            editor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.KeyDownEvent
+            });
+            Assert.Equal(new DateTime(2026, 11, 5), picker.SelectedDate);
+            Assert.Equal(@"05\11\2026", editor.Text);
+
+            editor.Text = @"06\11\2026";
+            editor.RaiseEvent(new KeyboardFocusChangedEventArgs(Keyboard.PrimaryDevice, 0, editor, next)
+            {
+                RoutedEvent = Keyboard.PreviewLostKeyboardFocusEvent
+            });
+            editor.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
+            Assert.Equal(new DateTime(2026, 11, 6), picker.SelectedDate);
+            Assert.Equal(@"06\11\2026", editor.Text);
+        });
+    }
+
     private static void RunOnSta(Action action)
     {
         ExceptionDispatchInfo? error = null;
@@ -407,20 +540,28 @@ public class WindowSmokeTests
         error?.Throw();
     }
 
+    private sealed class SmokeTestApp : App
+    {
+        // Modal dialogs can pump the dispatcher during tests. The harness owns application startup.
+        protected override void OnStartup(StartupEventArgs e) { }
+    }
+
     private sealed class NullJiraClient : IJiraClient
     {
         public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }
         public JiraWorklog? UpdatedWorklog { get; set; }
         public int UpdatedSeconds { get; private set; }
-        public (string IssueKey, string Text, bool Internal)? AddedComment { get; private set; }
+        public (string IssueKey, string WorklogId, string Text)? AddedWorklogComment { get; private set; }
         public JiraConnection Connection { get; } = new(new Uri("https://example.atlassian.net/"), "a@b.c", "t");
         public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
             Task.FromResult(JiraDurationSettings.Default);
         public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default) => Task.FromResult<JiraSla?>(null);
         public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) =>
-            Worklogs is null ? throw new NotSupportedException() : Task.FromResult(Worklogs);
+            Worklogs is null ? throw new NotSupportedException()
+                : Task.FromResult<IReadOnlyList<JiraWorklog>>(Worklogs.Where(worklog => worklog.IssueKey == issueKey).ToList());
         public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default)
         {
@@ -430,12 +571,15 @@ public class WindowSmokeTests
                 { Started = startedLocal, TimeSpentSeconds = timeSpentSeconds } : w).ToList();
             return Task.CompletedTask;
         }
-        public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default)
+        public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<string?> AddWorklogWithIdAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task AddWorklogCommentAsync(string issueKey, string worklogId, string wikiMarkup, CancellationToken ct = default)
         {
-            AddedComment = (issueKey, wikiMarkup, isInternal);
+            AddedWorklogComment = (issueKey, worklogId, wikiMarkup);
             return Task.CompletedTask;
         }
         public Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<byte[]?> GetIssueTypeIconAsync(string avatarId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task DeleteWorklogAsync(string issueKey, string worklogId, CancellationToken ct = default) => throw new NotSupportedException();
     }
 }

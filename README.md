@@ -51,6 +51,11 @@ Jira Cloud uses your Atlassian email and an [API token](https://id.atlassian.com
 
 A classic token still works, but Settings warns that it has full access to your account.
 
+The SLA indicator needs permission to view the Jira Service Management request. Atlassian lists
+`read:jira-work` as the classic scope for the [SLA endpoint](https://developer.atlassian.com/cloud/jira/service-desk/rest/api-group-request/#api-rest-servicedeskapi-request-issueidorkey-sla-get).
+If you use granular scopes, include `read:request.sla:jira-service-management`. Recreate a scoped token
+if its SLA scope is missing. When Jira does not make an SLA available, the indicator uses the due date.
+
 The site, email and token are stored together as a Generic Credential in Windows Credential Manager. Editing other files therefore can't redirect the token to a different site. Existing `credentials.bin` DPAPI data is migrated automatically and removed only after the new credential is verified. If you change the site in Settings, you must enter the token again.
 
 If Jira rejects the token (for example because it expired), the app asks once for a new one. Automatic refreshes pause until you enter it, and worklogs are kept and posted afterwards. Preferences, state and logs are stored in `%LOCALAPPDATA%\JiraTaskBar`.
@@ -70,15 +75,19 @@ dotnet publish src/JiraTaskBar.App -c Release -r win-x64 --self-contained -p:Pub
 ```
 The comment preview uses the Microsoft Edge WebView2 runtime, which comes with Windows 11.
 
+### Development workflow
+
+Branch from `dev` for each issue. Open a pull request against `dev`, wait for CI and review, then merge it into `dev`. When a set of changes is ready to release, open a pull request from `dev` to `main` and merge it after review and CI.
+
 ### Releases
 ```
 ./build/publish.ps1 -CertificateThumbprint <code-signing cert thumbprint>
 ```
 This runs a locked restore and the tests, publishes a self-contained single exe to `artifacts/publish`, optionally signs it, starts the packaged exe in smoke-test mode, and writes a SHA-256 file next to it. The smoke test must exit successfully within 30 seconds and does not require Jira credentials or network access. Without a certificate it builds unsigned and warns. Install the result under `%ProgramFiles%` so other processes can't replace the exe.
 
-GitHub Actions runs locked restore, warning-free Release build, and all tests for pushes and pull requests. On its clean Windows runner it also starts the packaged executable in smoke-test mode, then uploads the unsigned `JiraTaskBar.exe` and SHA-256 checksum as a workflow artifact. Pushing a semantic-version tag (for example `v1.1.0` or `v1.2.0-beta.1`) runs the release workflow, stamps that version into the executable, generates release notes, and attaches the executable and checksum to a GitHub Release. Tags containing a prerelease suffix create a GitHub prerelease. Use **Run workflow** on the Actions page to test packaging without creating a release.
+GitHub Actions runs locked restore, a warning-free Release build, and all tests on pushes to `main` and `dev` and on pull requests. On its clean Windows runner it also starts the packaged executable in smoke-test mode, then uploads the unsigned `JiraTaskBar.exe`, SHA-256 checksum, and license as a workflow artifact. Pushing a semantic-version tag (for example `v1.1.0` or `v1.2.0-beta.1`) runs the release workflow, stamps that version into the executable, generates release notes, and attaches the executable, checksum, and license to a GitHub Release. GitHub includes ZIP and tar.gz source archives for the tag. Tags containing a prerelease suffix create a GitHub prerelease. Use **Run workflow** on the Actions page to test packaging without creating a release.
 
-To publish a release from an up-to-date `main` branch:
+After merging the release pull request, update your local `main` branch, then tag the release commit and push the tag:
 
 ```powershell
 git tag -a v1.1.0 -m "Jira TaskBar v1.1.0"

@@ -11,11 +11,15 @@ public interface IJiraClient
     Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
+    Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
     Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
     Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
         int timeSpentSeconds, CancellationToken ct = default);
+    Task DeleteWorklogAsync(string issueKey, string worklogId, CancellationToken ct = default);
     Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default);
+    Task AddWorklogCommentAsync(string issueKey, string worklogId, string wikiMarkup, CancellationToken ct = default);
+    Task<string?> AddWorklogWithIdAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default);
     /// <returns>The filename Jira stored the attachment under.</returns>
     Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default);
     /// <summary>The issue type's icon as PNG bytes, or null if Jira didn't return a usable PNG.</summary>
@@ -147,20 +151,109 @@ public sealed class JiraClient : IJiraClient
         return IssueOrdering.Sort(all);
     }
 
+    public async Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default)
+    {
+        var path = $"rest/servicedeskapi/request/{Uri.EscapeDataString(issueKey)}/sla";
+        for (var start = 0; start < 1000;)
+        {
+            var response = await SendAsync(HttpMethod.Get, $"{path}?start={start}&limit=50", null, ct) as JsonObject;
+            if (response?["values"] is not JsonArray { Count: > 0 } values) return null;
+            foreach (var metric in values.OfType<JsonObject>())
+                if (JiraSla.Parse(metric) is { } sla) return sla with { ObservedAt = DateTimeOffset.UtcNow };
+
+            if (response["isLastPage"] is not JsonValue last || !last.TryGetValue<bool>(out var isLast) || isLast)
+                return null;
+            start += values.Count;
+        }
+        return null;
+    }
+
     public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) =>
-        SendAsync(HttpMethod.Post, $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog",
-            JiraPayloads.Worklog(startedLocal, timeSpentSeconds, comment), ct);
+        PostWorklogAsync(issueKey, startedLocal, timeSpentSeconds, comment, ct);
+
+    public async Task<string?> AddWorklogWithIdAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default)
+    {
+        var response = await PostWorklogAsync(issueKey, startedLocal, timeSpentSeconds, null, ct);
+        return (response as JsonObject)?["id"] is JsonValue value &&
+            value.TryGetValue<string>(out var id) && IsNumericId(id) ? id : null;
+    }
+
+    private Task<JsonNode?> PostWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds,
+        string? comment, CancellationToken ct) => SendAsync(HttpMethod.Post,
+        $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog", JiraPayloads.Worklog(startedLocal, timeSpentSeconds, comment), ct);
 
     public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
         int timeSpentSeconds, CancellationToken ct = default)
     {
-        var worklogId = worklog.Id;
-        if (string.IsNullOrWhiteSpace(worklogId) || !worklogId.All(char.IsAsciiDigit))
-            throw new ArgumentException("Jira worklog IDs must be numeric.", nameof(worklog));
         return SendAsync(HttpMethod.Put,
-            $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog/{worklogId}",
+            WorklogPath(issueKey, worklog.Id),
             JiraPayloads.Worklog(startedLocal, timeSpentSeconds, worklog.Comment, worklog.CommentDocument), ct);
     }
+
+    public async Task DeleteWorklogAsync(string issueKey, string worklogId, CancellationToken ct = default)
+    {
+        var worklogPath = WorklogPath(issueKey, worklogId);
+        var commentPath = CommentPath(issueKey);
+        var linked = await GetLinkedWorklogCommentIdsAsync(commentPath, worklogId, ct);
+        var removed = 0;
+        try
+        {
+            // Keep the worklog available for retry if Jira rejects removal of a linked comment.
+            foreach (var id in linked)
+            {
+                await SendAsync(HttpMethod.Delete, $"{commentPath}/{id}", null, ct);
+                removed++;
+            }
+            await SendAsync(HttpMethod.Delete, $"{worklogPath}?adjustEstimate=leave", null, ct);
+        }
+        catch (Exception ex) when (removed > 0 && !ct.IsCancellationRequested)
+        {
+            throw new InvalidOperationException(
+                $"Jira deleted {removed} linked comment(s) before the operation stopped. " +
+                $"Refresh the worklog before retrying. {ex.Message}", ex);
+        }
+    }
+
+    private async Task<IReadOnlyCollection<string>> GetLinkedWorklogCommentIdsAsync(string commentPath,
+        string worklogId, CancellationToken ct)
+    {
+        var linked = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var startAt = 0;
+        int? expectedTotal = null;
+        while (true)
+        {
+            var page = await SendAsync(HttpMethod.Get,
+                $"{commentPath}?startAt={startAt}&maxResults=100&orderBy=created&expand=properties", null, ct) as JsonObject;
+            if (page?["comments"] is not JsonArray comments || page["total"] is not JsonValue totalValue ||
+                !totalValue.TryGetValue<int>(out var total) || total < 0 ||
+                page["startAt"] is not JsonValue startValue || !startValue.TryGetValue<int>(out var offset) || offset != startAt ||
+                comments.Count > total - startAt || (comments.Count == 0 && startAt < total) ||
+                (expectedTotal is { } expected && total != expected))
+                throw new InvalidOperationException("Jira returned an incomplete comment list. The worklog was not deleted.");
+
+            expectedTotal = total;
+            foreach (var node in comments)
+            {
+                if (node is not JsonObject comment || comment["id"] is not JsonValue value ||
+                    !value.TryGetValue<string>(out var id) || !IsNumericId(id) || !seen.Add(id!))
+                    throw new InvalidOperationException("Jira returned an invalid or repeated comment ID. The worklog was not deleted.");
+                if (JiraPayloads.IsLinkedWorklogComment(comment, worklogId))
+                    linked.Add(id!);
+            }
+            startAt += comments.Count;
+            if (startAt >= total) return linked;
+        }
+    }
+
+    private static string WorklogPath(string issueKey, string worklogId)
+    {
+        if (!IsNumericId(worklogId))
+            throw new ArgumentException("Jira worklog IDs must be numeric.", nameof(worklogId));
+        return $"rest/api/3/issue/{Uri.EscapeDataString(issueKey)}/worklog/{worklogId}";
+    }
+
+    private static bool IsNumericId(string? id) => !string.IsNullOrEmpty(id) && id.All(char.IsAsciiDigit);
 
     public async Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default)
     {
@@ -182,8 +275,16 @@ public sealed class JiraClient : IJiraClient
     }
 
     public Task AddCommentAsync(string issueKey, string wikiMarkup, bool isInternal, CancellationToken ct = default) =>
-        SendAsync(HttpMethod.Post, $"rest/api/2/issue/{Uri.EscapeDataString(issueKey)}/comment",
-            JiraPayloads.Comment(wikiMarkup, isInternal), ct);
+        SendAsync(HttpMethod.Post, CommentPath(issueKey), JiraPayloads.Comment(wikiMarkup, isInternal), ct);
+
+    public Task AddWorklogCommentAsync(string issueKey, string worklogId, string wikiMarkup, CancellationToken ct = default)
+    {
+        if (!IsNumericId(worklogId)) throw new ArgumentException("Jira worklog IDs must be numeric.", nameof(worklogId));
+        return SendAsync(HttpMethod.Post, CommentPath(issueKey),
+            JiraPayloads.Comment(wikiMarkup, isInternal: true, worklogId), ct);
+    }
+
+    private static string CommentPath(string issueKey) => $"rest/api/2/issue/{Uri.EscapeDataString(issueKey)}/comment";
 
     public async Task<string> AddAttachmentAsync(string issueKey, string filePath, CancellationToken ct = default)
     {

@@ -53,6 +53,11 @@
                     <Run Text="→ Jira, and select:" />
                     <Run x:Name="ScopesRun" FontFamily="Consolas" />
                 </TextBlock>
+                <TextBlock FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,0">
+                    <Run Text="SLA lookup uses read:jira-work or the granular scope" />
+                    <Run x:Name="SlaScopeRun" FontFamily="Consolas" />
+                    <Run Text="and needs permission to view the Jira service request." />
+                </TextBlock>
                 <TextBlock Text="Cloud ID" FontWeight="SemiBold" Margin="0,6,0,0" />
                 <ui:TextBox x:Name="CloudIdBox" Margin="0,4,0,2" FontFamily="Consolas"
                             PlaceholderText="Found automatically from the site – or paste it from admin.atlassian.com" />
@@ -92,6 +97,16 @@
             <TextBlock Text="Calendar time resolution" FontWeight="SemiBold" />
             <ComboBox x:Name="CalendarResolutionBox" Margin="0,4,0,10"
                       ToolTip="Day and Week calendar rows, selections, and edits snap to this interval." />
+
+            <TextBlock Text="Daily worklog target in minutes (optional)" FontWeight="SemiBold" />
+            <ui:NumberBox x:Name="DailyTargetBox" Margin="0,4,0,10" Minimum="0" Maximum="1440"
+                          SmallChange="15" MaxDecimalPlaces="0" ToolTip="Leave empty or enter zero to turn off the target." />
+
+            <TextBlock Text="Worklog colors by project and issue type" FontWeight="SemiBold" />
+            <TextBlock Margin="0,4,0,0" Text="Enter one rule per line, for example IT / Incident = #3866A8."
+                       TextWrapping="Wrap" Opacity="0.75" />
+            <TextBox x:Name="WorklogColorsBox" Margin="0,4,0,10" AcceptsReturn="True" MinLines="2"
+                     MaxLines="5" VerticalScrollBarVisibility="Auto" />
 
             <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,8" />
             <ui:ToggleSwitch x:Name="HideFromCaptureSwitch" Margin="0,0,0,8"

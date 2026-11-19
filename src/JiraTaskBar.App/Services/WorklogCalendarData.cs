@@ -16,10 +16,12 @@ internal static class WorklogCalendarData
         .ToList();
 
     public static async Task<WorklogCalendarLoadResult> LoadAsync(IJiraClient client,
-        IReadOnlyList<JiraIssue> issues, JiraIssue selected, CancellationToken ct)
+        IReadOnlyList<JiraIssue> issues, JiraIssue selected, CancellationToken ct,
+        IEnumerable<string>? localIssueKeys = null)
     {
         var keys = issues.Append(selected)
             .Select(issue => issue.Key)
+            .Concat(localIssueKeys ?? [])
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();

@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Windows;
 using JiraTaskBar.Core.Jira;
 using JiraTaskBar.Core.Tracking;
-using Wpf.Ui.Controls;
+using InfoBarSeverity = Wpf.Ui.Controls.InfoBarSeverity;
 
 namespace JiraTaskBar.App.Views;
 
@@ -37,18 +37,20 @@ public partial class AddWorklogWindow
         {
             Title = DialogTitle.Title = "Edit worklog";
             TicketBox.IsEnabled = false;
+            DeleteButton.Visibility = Visibility.Visible;
             DescriptionBox.Text = original.Comment ?? string.Empty;
         }
     }
 
     public bool WorklogSaved => _worklogSaved;
+    public bool WorklogDeleted { get; private set; }
     public JiraIssue? SavedIssue { get; private set; }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
         if (_worklogSaved || _saving || !TryRead(out var issue, out var started, out var seconds)) return;
         _saving = true;
-        SaveButton.IsEnabled = CancelButton.IsEnabled = false;
+        SaveButton.IsEnabled = DeleteButton.IsEnabled = CancelButton.IsEnabled = false;
         Status.Severity = InfoBarSeverity.Informational;
         Status.Message = "Saving to Jira…";
         Status.IsOpen = true;
@@ -56,33 +58,35 @@ public partial class AddWorklogWindow
         var asTicketComment = DescriptionTargetBox.SelectedIndex == 1;
         try
         {
+            string? worklogId = null;
+            var postLinkedComment = asTicketComment && description.Length > 0;
             if (_original is { } original)
             {
-                var latest = (await _client.GetWorklogsAsync(issue.Key)).FirstOrDefault(w => w.Id == original.Id);
-                if (latest is null || latest.Started != original.Started ||
-                    latest.TimeSpentSeconds != original.TimeSpentSeconds || latest.Comment != original.Comment ||
-                    !System.Text.Json.Nodes.JsonNode.DeepEquals(latest.CommentDocument, original.CommentDocument))
+                var latest = await ReadUnchangedWorklogAsync(original);
+                if (latest is null)
                 {
                     Invalid("This worklog changed in Jira. Close the editor and refresh before editing it again.");
-                    SaveButton.IsEnabled = CancelButton.IsEnabled = true;
                     return;
                 }
                 var changedDescription = !asTicketComment && description != (original.Comment ?? string.Empty).Trim();
                 await _client.UpdateWorklogAsync(issue.Key, changedDescription
                     ? latest with { Comment = description, CommentDocument = null } : latest, started, seconds);
+                worklogId = latest.Id;
             }
+            else if (postLinkedComment)
+                worklogId = await _client.AddWorklogWithIdAsync(issue.Key, started, seconds);
             else
-                await _client.AddWorklogAsync(issue.Key, started, seconds,
-                    asTicketComment || description.Length == 0 ? null : description);
+                await _client.AddWorklogAsync(issue.Key, started, seconds, description);
             _worklogSaved = true;
             SavedIssue = issue;
 
-            if (asTicketComment && description.Length > 0)
+            if (postLinkedComment)
             {
                 try
                 {
-                    // Internal is the safe default for Jira Service Management; other projects ignore it.
-                    await _client.AddCommentAsync(issue.Key, description, isInternal: true);
+                    if (worklogId is null)
+                        throw new InvalidOperationException("Jira did not return a worklog ID to link the comment.");
+                    await _client.AddWorklogCommentAsync(issue.Key, worklogId, description);
                 }
                 catch (Exception ex)
                 {
@@ -100,11 +104,56 @@ public partial class AddWorklogWindow
         {
             Status.Severity = InfoBarSeverity.Error;
             Status.Message = $"Could not save the worklog: {ex.Message}";
-            SaveButton.IsEnabled = CancelButton.IsEnabled = true;
         }
         finally
         {
             _saving = false;
+            if (!_worklogSaved) SaveButton.IsEnabled = DeleteButton.IsEnabled = CancelButton.IsEnabled = true;
+        }
+    }
+
+    private async Task<JiraWorklog?> ReadUnchangedWorklogAsync(JiraWorklog original)
+    {
+        var latest = (await _client.GetWorklogsAsync(original.IssueKey)).FirstOrDefault(worklog => worklog.Id == original.Id);
+        return latest is not null && latest.Started == original.Started &&
+            latest.TimeSpentSeconds == original.TimeSpentSeconds && latest.Comment == original.Comment &&
+            System.Text.Json.Nodes.JsonNode.DeepEquals(latest.CommentDocument, original.CommentDocument) ? latest : null;
+    }
+
+    private async void Delete_Click(object sender, RoutedEventArgs e)
+    {
+        if (_original is not { } original || _saving || _worklogSaved || WorklogDeleted) return;
+        _saving = true;
+        SaveButton.IsEnabled = DeleteButton.IsEnabled = CancelButton.IsEnabled = false;
+        try
+        {
+            if (System.Windows.MessageBox.Show(this,
+                    $"Delete the worklog, its description, and any linked issue comments from {original.IssueKey}?",
+                    "Delete worklog", MessageBoxButton.YesNo, MessageBoxImage.Warning,
+                    MessageBoxResult.No) != MessageBoxResult.Yes) return;
+
+            Status.Severity = InfoBarSeverity.Informational;
+            Status.Message = "Deleting from Jira…";
+            Status.IsOpen = true;
+            if (await ReadUnchangedWorklogAsync(original) is null)
+            {
+                Invalid("This worklog changed in Jira. Close the editor and refresh before deleting it.");
+                return;
+            }
+
+            await _client.DeleteWorklogAsync(original.IssueKey, original.Id);
+            WorklogDeleted = true;
+            _saving = false;
+            DialogResult = true;
+        }
+        catch (Exception ex)
+        {
+            Invalid($"Could not delete the worklog: {ex.Message}");
+        }
+        finally
+        {
+            _saving = false;
+            if (!WorklogDeleted) SaveButton.IsEnabled = DeleteButton.IsEnabled = CancelButton.IsEnabled = true;
         }
     }
 
@@ -160,7 +209,7 @@ public partial class AddWorklogWindow
         if (!_saving) return;
         e.Cancel = true;
         Status.Severity = InfoBarSeverity.Informational;
-        Status.Message = "Please wait for Jira to finish saving the worklog.";
+        Status.Message = "Please wait for Jira to finish updating the worklog.";
         Status.IsOpen = true;
     }
 
