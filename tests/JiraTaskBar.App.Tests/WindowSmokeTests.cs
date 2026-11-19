@@ -146,19 +146,6 @@ public class WindowSmokeTests
             toDate.SelectedDate = new DateTime(2026, 11, 9);
             Assert.Equal(@"03\11\2026", fromEditor.Text);
             Assert.Equal(@"09\11\2026", toEditor.Text);
-
-            fromEditor.Text = @"05\11\2026";
-            var source = PresentationSource.FromVisual(fromEditor)!;
-            fromEditor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
-            {
-                RoutedEvent = Keyboard.PreviewKeyDownEvent
-            });
-            fromEditor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
-            {
-                RoutedEvent = Keyboard.KeyDownEvent
-            });
-            Assert.Equal(new DateTime(2026, 11, 5), fromDate.SelectedDate);
-            Assert.Equal(@"05\11\2026", fromEditor.Text);
             contextReport.Close();
 
             foreach (var resolution in WorklogCalendarLayout.SupportedResolutions)
@@ -413,6 +400,41 @@ public class WindowSmokeTests
         SetTime(now);
         Assert.Equal(Visibility.Visible, line.Visibility);
         Assert.Equal(3, Grid.GetColumn(line));
+    }
+
+    [Fact]
+    public void Context_date_picker_commits_backslash_dates()
+    {
+        RunOnSta(() =>
+        {
+            var picker = new ContextDatePicker
+            {
+                Language = System.Windows.Markup.XmlLanguage.GetLanguage("en-GB"),
+                SelectedDateFormat = DatePickerFormat.Short,
+                SelectedDate = new DateTime(2026, 11, 3)
+            };
+            using var source = new HwndSource(new HwndSourceParameters("Context date picker test")
+            {
+                Width = 200,
+                Height = 60
+            });
+            source.RootVisual = picker;
+            picker.ApplyTemplate();
+            var editor = (DatePickerTextBox)picker.Template.FindName("PART_TextBox", picker);
+            Assert.Equal(@"03\11\2026", editor.Text);
+
+            editor.Text = @"05\11\2026";
+            editor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent
+            });
+            editor.RaiseEvent(new System.Windows.Input.KeyEventArgs(Keyboard.PrimaryDevice, source, 0, Key.Enter)
+            {
+                RoutedEvent = Keyboard.KeyDownEvent
+            });
+            Assert.Equal(new DateTime(2026, 11, 5), picker.SelectedDate);
+            Assert.Equal(@"05\11\2026", editor.Text);
+        });
     }
 
     private static void RunOnSta(Action action)
