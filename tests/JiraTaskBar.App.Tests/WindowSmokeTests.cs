@@ -192,7 +192,21 @@ public class WindowSmokeTests
                 Assert.IsType<string>(((FrameworkElement)settings.FindName(name)).ToolTip);
             var tabs = (TabControl)settings.FindName("SettingsTabs");
             Assert.Equal(8, tabs.Items.Count);
-            Assert.Same(settings.FindName("JiraTab"), tabs.SelectedItem);
+            Assert.Equal(Dock.Top, tabs.TabStripPlacement);
+            var jiraTab = (TabItem)settings.FindName("JiraTab");
+            Assert.Same(jiraTab, tabs.SelectedItem);
+            var headerTop = jiraTab.TranslatePoint(new Point(), tabs).Y;
+            var previousRight = double.NegativeInfinity;
+            foreach (var tab in tabs.Items.OfType<TabItem>())
+            {
+                var outline = Assert.IsType<Border>(tab.Template.FindName("HeaderBorder", tab));
+                Assert.Equal(new Thickness(1), outline.BorderThickness);
+                Assert.NotNull(outline.BorderBrush);
+                var headerPosition = tab.TranslatePoint(new Point(), tabs);
+                Assert.Equal(headerTop, headerPosition.Y);
+                Assert.True(headerPosition.X >= previousRight);
+                previousRight = headerPosition.X + tab.ActualWidth;
+            }
             var additionalTickets = (TextBox)settings.FindName("AdditionalTicketsBox");
             Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
             tabs.SelectedItem = settings.FindName("AddTicketsTab");
@@ -216,7 +230,35 @@ public class WindowSmokeTests
                 .Invoke(settings, [settings, new RoutedEventArgs()]);
             Assert.Same(settings.FindName("AddTicketsTab"), tabs.SelectedItem);
             Assert.Contains("Enter a Jira ticket key", ((Wpf.Ui.Controls.InfoBar)settings.FindName("Status")).Message);
+
+            settings.Width = settings.MinWidth;
+            settings.UpdateLayout();
+            var headers = Assert.IsType<ScrollViewer>(tabs.Template.FindName("SettingsTabHeaders", tabs));
+            var windowsTab = (TabItem)settings.FindName("WindowsTab");
+            Assert.True(headers.ScrollableWidth > 0);
+            headers.ScrollToRightEnd();
+            settings.UpdateLayout();
+            Assert.Equal(headers.ScrollableWidth, headers.HorizontalOffset);
+            AssertHeaderVisible(windowsTab);
+            tabs.SelectedItem = windowsTab;
+            settings.UpdateLayout();
+            Assert.True(((FrameworkElement)settings.FindName("StartupSwitch")).IsVisible);
+            Assert.True(jiraTab.TranslatePoint(new Point(), headers).X < 0);
+
+            ((TextBox)settings.FindName("EmailBox")).Clear();
+            Keyboard.ClearFocus();
+            ((ButtonBase)settings.FindName("TestButton")).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            settings.UpdateLayout();
+            Assert.Same(jiraTab, tabs.SelectedItem);
+            AssertHeaderVisible(jiraTab);
             settings.Close();
+
+            void AssertHeaderVisible(TabItem tab)
+            {
+                var left = tab.TranslatePoint(new Point(), headers).X;
+                Assert.InRange(left, -1, headers.ViewportWidth - tab.ActualWidth + 1);
+            }
+
             const string dataCenterSite = "https://jira.example.org/jira/";
             const string alternateContext = "https://jira.example.org/Jira/";
             var siteSettings = new AppSettings();
