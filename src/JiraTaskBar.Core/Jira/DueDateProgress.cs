@@ -11,29 +11,34 @@ public static class DueDateProgress
     {
         if (issue.Sla is not { } sla) return Calculate(issue, now, zone);
 
-        var kind = sla.Breached ? DueDateKind.Overdue : sla.Completed ? DueDateKind.Met : DueDateKind.Upcoming;
-        var status = kind switch
+        var title = $"{sla.Name} (SLA)";
+        if (sla.Breached) return new(DueDateKind.Overdue, 0, $"{title}: Breached");
+        if (sla.Completed) return new(DueDateKind.Met, 1, $"{title}: Met");
+        if (now - sla.ObservedAt >= TimeSpan.FromMinutes(10))
+            return new(DueDateKind.Upcoming, null, $"{title}: Waiting for a fresh Jira reading");
+
+        var status = sla.Paused ? "Paused" : "In progress";
+        var tooltip = $"{title}: {status}";
+        if (sla.RemainingMilliseconds is not { } snapshot) return new(DueDateKind.Upcoming, null, tooltip);
+
+        var remaining = Math.Max(0d, snapshot);
+        var label = $"Remaining when checked at {sla.ObservedAt.UtcDateTime:HH:mm:ss} UTC";
+        if (!sla.Paused && snapshot > 0 && sla.BreachAt is { } breach &&
+            Math.Abs((breach - sla.ObservedAt).TotalMilliseconds - snapshot) <= 2000)
         {
-            DueDateKind.Overdue => "Breached",
-            DueDateKind.Met => "Met",
-            _ => sla.Paused ? "Paused" : "In progress",
-        };
-        var tooltip = $"{sla.Name} (SLA): {status}";
-        double? fraction = null;
-        if (!sla.Completed && !sla.Breached && now - sla.ObservedAt >= TimeSpan.FromMinutes(10))
-            return new(kind, null, $"{sla.Name} (SLA): Waiting for a fresh Jira reading");
-        if (!sla.Completed && sla.RemainingMilliseconds is { } remaining)
-        {
-            if (sla.GoalMilliseconds is > 0 and var goal)
-                fraction = Math.Clamp((double)remaining / goal, 0, 1);
-            if (remaining >= 0 && remaining < TimeSpan.MaxValue.TotalMilliseconds)
-            {
-                var duration = TimeSpan.FromMilliseconds((double)remaining);
-                tooltip += $"\nRemaining when checked at {sla.ObservedAt.UtcDateTime:HH:mm:ss} UTC: " +
-                    $"{(int)duration.TotalDays}d {duration.Hours}h {duration.Minutes}m {duration.Seconds}s";
-            }
+            // A projected deadline that agrees with the SLA clock indicates a continuous working interval.
+            // The tolerance allows for Jira's sampling and timestamp precision.
+            remaining = Math.Clamp((breach - now).TotalMilliseconds, 0, remaining);
+            label = "Estimated remaining";
         }
-        return new(kind, fraction, tooltip);
+        double? fraction = sla.GoalMilliseconds is > 0 and var goal ? Math.Clamp(remaining / goal, 0, 1) : null;
+        if (remaining < TimeSpan.MaxValue.TotalMilliseconds)
+        {
+            var duration = TimeSpan.FromMilliseconds(remaining);
+            tooltip += $"\n{label}: {FormatCountdown(duration)}";
+            if (fraction is { } progress) tooltip += $" ({progress:P0} of the SLA goal)";
+        }
+        return new(DueDateKind.Upcoming, fraction, tooltip);
     }
 
     public static DateTimeOffset Deadline(DateOnly dueDate, TimeZoneInfo zone) =>
@@ -53,9 +58,12 @@ public static class DueDateProgress
         var duration = remaining.Duration();
         var label = kind switch { DueDateKind.Today => "Due today", DueDateKind.Soon => "Due soon",
             DueDateKind.Overdue => "Overdue", _ => "Upcoming" };
-        var countdown = $"{(int)duration.TotalDays}d {duration.Hours}h {duration.Minutes}m {duration.Seconds}s";
+        var countdown = FormatCountdown(duration);
         return new(kind, fraction, $"{label}: {due:yyyy-MM-dd} (end of day, {zone.DisplayName})\n" +
             (kind == DueDateKind.Overdue ? $"Overdue by {countdown}" : $"Remaining: {countdown}") +
-            (fraction.HasValue ? "\nPie: remaining share of creation-to-deadline interval" : "\nPercentage unavailable: no valid creation baseline"));
+            (fraction is { } progress ? $"\n{progress:P0} of the creation-to-deadline interval remains" : "\nPercentage unavailable: no valid creation baseline"));
     }
+
+    private static string FormatCountdown(TimeSpan duration) =>
+        $"{(int)duration.TotalDays}d {duration.Hours}h {duration.Minutes}m {duration.Seconds}s";
 }

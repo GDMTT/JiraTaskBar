@@ -167,11 +167,12 @@ public class JiraClientTests
         var (client, handler) = Create();
         handler.Respond("""
             {"values":[{"name":"Response","ongoingCycle":{"breached":false,"withinCalendarHours":false,
-                "goalDuration":{"millis":600000},"remainingTime":{"millis":300000}},
+                "goalDuration":{"millis":600000},"elapsedTime":{"millis":300000},"breachTime":{"epochMillis":2000}},
                 "completedCycles":[{"breached":true}]}],"isLastPage":true}
             """);
         var issue = new JiraIssue("SD-2", "Ticket", null, "Open", "service_desk", "Task")
             { Sla = await client.GetRequestSlaAsync("SD-2") };
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(2000), issue.Sla!.BreachAt);
         var urgency = DueDateProgress.CalculateUrgency(issue, DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
         Assert.Contains("Paused", urgency.Tooltip);
         Assert.Contains("Remaining when checked at", urgency.Tooltip);

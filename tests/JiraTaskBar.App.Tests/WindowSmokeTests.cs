@@ -69,34 +69,9 @@ public class WindowSmokeTests
             {
                 indicator.State = state;
                 indicatorWindow.UpdateLayout();
-                var rendered = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-                rendered.Render(indicator);
-                if (state.Kind == DueDateKind.Today)
-                {
-                    var dueToday = new DueDateIndicator { Width = 16, Height = 16, State = state };
-                    dueToday.Measure(new Size(16, 16));
-                    dueToday.Arrange(new Rect(0, 0, 16, 16));
-                    rendered = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-                    rendered.Render(dueToday);
-                    var pixels = new byte[16 * 16 * 4];
-                    rendered.CopyPixels(pixels, 16 * 4, 0);
-                    var redPixels = 0;
-                    var whiteOverlayPixels = 0;
-                    for (var y = 0; y < 16; y++)
-                    for (var x = 0; x < 16; x++)
-                    {
-                        var pixel = (y * 16 + x) * 4;
-                        if (pixels[pixel + 3] > 100 && pixels[pixel + 2] > 100 &&
-                            pixels[pixel + 2] > pixels[pixel + 1] * 2) redPixels++;
-                        if (x is >= 4 and <= 11 && y is >= 3 and <= 12 && pixels[pixel + 3] > 240 &&
-                            pixels[pixel] > 240 && pixels[pixel + 1] > 240 && pixels[pixel + 2] > 240) whiteOverlayPixels++;
-                    }
-                    Assert.True(redPixels > 0 && whiteOverlayPixels == 0,
-                        $"The due-today indicator should be a red pie without a white letter overlay. " +
-                        $"Found {redPixels} red pixels and {whiteOverlayPixels} white overlay pixels.");
-                }
                 Assert.Same(indicator, indicator.InputHitTest(new Point(8, 8)));
             }
+            AssertUrgencyPieColors();
             indicatorWindow.Close();
             typeof(BarViewModel).GetField("_lastIssues", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .SetValue(controller.Bar, new[] { issue });
@@ -239,6 +214,36 @@ public class WindowSmokeTests
             AssertCalendarClickEditsSavedWorklog(issue);
             app.Shutdown();
         });
+    }
+
+    private static void AssertUrgencyPieColors()
+    {
+        byte[] Render(DueDateKind kind, double fraction)
+        {
+            var indicator = new DueDateIndicator { Width = 16, Height = 16, State = new(kind, fraction, "Urgency") };
+            indicator.Measure(new Size(16, 16));
+            indicator.Arrange(new Rect(0, 0, 16, 16));
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+            bitmap.Render(indicator);
+            var pixels = new byte[16 * 16 * 4];
+            bitmap.CopyPixels(pixels, 16 * 4, 0);
+            return pixels;
+        }
+
+        var full = Render(DueDateKind.Upcoming, 1);
+        var half = Render(DueDateKind.Upcoming, 0.5);
+        var low = Render(DueDateKind.Today, 0.1);
+        var overdue = Render(DueDateKind.Overdue, 0);
+        var center = (8 * 16 + 8) * 4;
+        var filledSector = (3 * 16 + 9) * 4;
+        var usedSector = (6 * 16 + 4) * 4;
+        var ring = (1 * 16 + 8) * 4;
+        Assert.True(full[center + 1] > full[center + 2] && full[center + 3] == 255);
+        Assert.True(half[filledSector + 2] > half[filledSector + 1] && half[filledSector + 1] > half[filledSector]);
+        Assert.True(half[usedSector + 3] < 100 && low[usedSector + 3] < 100);
+        Assert.True(low[filledSector + 2] > low[filledSector + 1] * 2);
+        Assert.Equal(new byte[] { 0, 0, 0, 255 }, overdue[center..(center + 4)]);
+        Assert.True(overdue[ring + 2] > overdue[ring + 1] * 2);
     }
 
     private static void AssertAddedTicketsJoinTheQueue(AppController controller, BarWindow bar, JiraIssue issue)
