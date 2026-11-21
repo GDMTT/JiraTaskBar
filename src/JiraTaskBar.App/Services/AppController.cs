@@ -158,13 +158,13 @@ public sealed class AppController : IDisposable
         _durationSettings = null;
         Icons.Reset();
 
-        if (_credentials is null || TrySite() is not { } site) return;
+        if (_credentials is null) return;
 
         _http = JiraClient.CreateHttpClient();
         try
         {
             // A cloud ID means a scoped token: calls go through api.atlassian.com instead of the site.
-            Client = new JiraClient(_http, new JiraConnection(site, _credentials.Email, _credentials.ApiToken, _credentials.CloudId));
+            Client = new JiraClient(_http, _credentials.CreateConnection());
         }
         catch (ArgumentException ex)
         {
@@ -243,17 +243,17 @@ public sealed class AppController : IDisposable
         return credentials;
     }
 
-    /// <summary>The stored site, or null if there is none or it isn't an https Jira Cloud site.</summary>
+    /// <summary>The HTTPS Jira base URL from the saved credential.</summary>
     private Uri? TrySite()
     {
         if (_credentials is null) return null;
         try
         {
-            return JiraConnection.NormalizeSiteUrl(_credentials.SiteUrl);
+            return JiraConnection.NormalizeConnectionSite(_credentials.SiteUrl, _credentials.IsDataCenter);
         }
         catch (ArgumentException ex)
         {
-            Log.Error($"Ignoring stored Jira site '{_credentials.SiteUrl}': {ex.Message}");
+            Log.Error("Ignoring an invalid stored Jira site", ex);
             return null;
         }
     }
@@ -288,6 +288,7 @@ public sealed class AppController : IDisposable
             _additionalTicketCache = new(StringComparer.OrdinalIgnoreCase);
         }
         var additionalTicketCache = _additionalTicketCache;
+        if (_priorities is null && client.Connection.IsDataCenter) await client.GetMyselfAsync();
         var priorities = _priorities ??= await client.GetPrioritiesAsync();
         try
         {
@@ -737,7 +738,7 @@ public sealed class AppController : IDisposable
     {
         if (!ReferenceEquals(source, Client)) return "The Jira connection changed. Open Browse queues again.";
         var site = source.Connection.SiteUrl.AbsoluteUri;
-        var saved = Settings.AdditionalTicketKeysBySite ??= new(StringComparer.OrdinalIgnoreCase);
+        var saved = Settings.AdditionalTicketKeysBySite ??= new(StringComparer.Ordinal);
         var original = saved.GetValueOrDefault(site);
         var useCache = ReferenceEquals(source, _additionalTicketClient);
         var pins = (original ?? []).Select(key => useCache ? _additionalTicketCache.GetValueOrDefault(key)?.Key ?? key : key)
@@ -804,11 +805,31 @@ public sealed class AppController : IDisposable
     private bool ShowSettingsDialog(bool firstRun, string? message = null)
     {
         var window = new SettingsWindow(Settings, _credentials, firstRun, message);
-        if (window.ShowDialog() != true || window.Credentials is not { } credentials) return false;
+        if (window.ShowDialog() != true) return false;
+        if (window.ForgetSignIn)
+        {
+            try { _secrets.Clear(); }
+            catch (Exception ex) when (ex is CredentialBackendException or IOException or UnauthorizedAccessException)
+            {
+                Log.Error("Could not remove the saved Jira sign-in", ex);
+                System.Windows.MessageBox.Show("Windows could not remove the saved Jira sign-in.", "Jira sign-in");
+                return false;
+            }
+            _credentials = null;
+            IsAuthFailed = false;
+            return true;
+        }
+        if (window.Credentials is not { } credentials) return false;
 
+        try { _secrets.Save(credentials); }
+        catch (CredentialBackendException ex)
+        {
+            Log.Error("Could not save the Jira sign-in", ex);
+            System.Windows.MessageBox.Show("Windows could not save the Jira sign-in.", "Jira sign-in");
+            return false;
+        }
         Settings = window.Result;
         _worklogWindow?.RefreshLocalEntries();
-        _secrets.Save(credentials);
         _credentials = credentials;
         IsAuthFailed = false;
         SaveSettings();
@@ -829,7 +850,7 @@ public sealed class AppController : IDisposable
     {
         if (IsAuthFailed) return;
         IsAuthFailed = true;
-        Log.Error("Jira rejected the API token (401); pausing automatic refresh");
+        Log.Error("Jira rejected the saved sign-in (401); pausing automatic refresh");
         _ = PromptReauthenticateAsync();
     }
 
@@ -843,16 +864,18 @@ public sealed class AppController : IDisposable
         _reauthPromptOpen = true;
         try
         {
+            var dataCenter = _credentials?.IsDataCenter == true;
+            var reason = dataCenter ? "Jira rejected the saved sign-in. Check the password and whether REST Basic sign-in is enabled."
+                : "Jira rejected your API token. It may have expired or been revoked.";
             var box = new MessageBox
             {
                 Title = "Jira sign-in needed",
-                Content = "Jira rejected your API token – it may have expired or been revoked.\n\n" +
-                          "Timers keep running and worklogs are kept; they'll be posted once you enter a new token.",
-                PrimaryButtonText = "Update token…",
+                Content = reason + "\n\nTimers keep running and worklogs are saved until you sign in again.",
+                PrimaryButtonText = "Update sign-in…",
                 CloseButtonText = "Later",
             };
             if (await box.ShowDialogAsync() == MessageBoxResult.Primary)
-                OpenSettings("Jira rejected the saved API token. Create a new one and paste it below.");
+                OpenSettings(reason);
         }
         finally
         {
@@ -907,7 +930,12 @@ public sealed class AppController : IDisposable
         switch (await box.ShowDialogAsync())
         {
             case MessageBoxResult.Primary:
-                await Worklogs.RetryPendingAsync();
+                var client = Client;
+                try { await Worklogs.RetryPendingAsync(); }
+                catch (JiraApiException ex) when (ex.StatusCode == 401 && client is not null)
+                {
+                    Bar.ReportJiraSignInFailure(client, ex);
+                }
                 break;
             case MessageBoxResult.Secondary:
                 foreach (var p in pending) Worklogs.Discard(p.Id);

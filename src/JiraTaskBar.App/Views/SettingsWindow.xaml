@@ -31,18 +31,24 @@
                         <TextBlock x:Name="IntroText" TextWrapping="Wrap" Opacity="0.8" Margin="0,0,0,12"
                                    Text="Connect to Jira Cloud with your Atlassian account email and an API token." />
 
+                        <Label Content="Authentication _method" Target="{Binding ElementName=AuthenticationBox}" Padding="0" FontWeight="SemiBold" />
+                        <ComboBox x:Name="AuthenticationBox" Margin="0,4,0,10" SelectionChanged="Authentication_Changed">
+                            <ComboBoxItem Content="Jira Cloud API token" />
+                            <ComboBoxItem Content="Jira Data Center username and password" />
+                        </ComboBox>
+
                         <TextBlock Text="Jira site" FontWeight="SemiBold" />
                         <ui:TextBox x:Name="SiteBox" Margin="0,4,0,10" PlaceholderText="yourcompany.atlassian.net"
                                     TextChanged="SiteBox_TextChanged"
                                     ToolTip="The Jira Cloud site to connect to, for example yourcompany.atlassian.net." />
 
-                        <TextBlock Text="Email" FontWeight="SemiBold" />
+                        <Label x:Name="LoginLabel" Content="_Email" Target="{Binding ElementName=EmailBox}" Padding="0" FontWeight="SemiBold" />
                         <ui:TextBox x:Name="EmailBox" Margin="0,4,0,10" PlaceholderText="you@company.com"
                                     ToolTip="The Atlassian account email that owns the API token." />
 
                         <DockPanel>
-                            <TextBlock Text="API token" FontWeight="SemiBold" />
-                            <TextBlock HorizontalAlignment="Right">
+                            <Label x:Name="SecretLabel" Content="API _token" Target="{Binding ElementName=TokenBox}" Padding="0" FontWeight="SemiBold" />
+                            <TextBlock x:Name="CreateTokenLink" HorizontalAlignment="Right">
                                 <Hyperlink Click="CreateToken_Click">Create an API token…</Hyperlink>
                             </TextBlock>
                         </DockPanel>
@@ -51,7 +57,7 @@
                         <TextBlock x:Name="TokenHint" FontSize="11" Opacity="0.65" Margin="0,0,0,6"
                                    Text="Stored in Windows Credential Manager. Leave blank to keep the saved token." />
 
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                        <StackPanel x:Name="TokenTypePanel" Orientation="Horizontal" Margin="0,0,0,4">
                             <RadioButton x:Name="ScopedRadio" GroupName="TokenType" Margin="0,0,16,0" Checked="TokenType_Changed"
                                          Content="Scoped token (recommended)"
                                          ToolTip="Limited to Jira work items. Calls go through api.atlassian.com." />
@@ -78,6 +84,7 @@
                         </StackPanel>
                         <TextBlock x:Name="ClassicWarning" FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap" Foreground="#F5A623"
                                    Text="A classic token can do anything you can do in Atlassian Cloud, including Confluence. If it leaks, all of that is exposed – prefer a scoped token." />
+                        <ui:Button x:Name="ForgetSignInButton" Content="Forget saved sign-in…" Click="ForgetSignIn_Click" Margin="0,0,0,10" />
 
                         <TextBlock Text="Tickets to show (JQL)" FontWeight="SemiBold" />
                         <ui:TextBox x:Name="JqlBox" Margin="0,4,0,2" AcceptsReturn="True" TextWrapping="Wrap" MinLines="2"

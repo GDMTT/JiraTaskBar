@@ -3,6 +3,8 @@ using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Windows;
 using CheckBox = System.Windows.Controls.CheckBox;
+using MessageBoxButton = System.Windows.MessageBoxButton;
+using MessageBoxResult = System.Windows.MessageBoxResult;
 using JiraTaskBar.App.Services;
 using JiraTaskBar.Core.Jira;
 using JiraTaskBar.Core.Storage;
@@ -15,7 +17,7 @@ namespace JiraTaskBar.App.Views;
 public partial class SettingsWindow : FluentWindow
 {
     private readonly StoredCredentials? _saved;
-    private readonly Dictionary<string, string> _additionalTicketDrafts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _additionalTicketDrafts = new(StringComparer.Ordinal);
     private string? _additionalTicketSite;
     private bool _ticketDraftsLoaded;
     /// <summary>The cloud ID confirmed by the last successful test (scoped tokens only).</summary>
@@ -35,7 +37,8 @@ public partial class SettingsWindow : FluentWindow
         ScopesRun.Text = JiraConnection.RequiredScopes;
         SlaScopeRun.Text = JiraConnection.GranularSlaScope;
         // New sign-ins default to a scoped token; existing classic tokens stay classic until changed.
-        (saved is { CloudId: null } ? ClassicRadio : ScopedRadio).IsChecked = true;
+        (saved is { CloudId: null, IsDataCenter: false } ? ClassicRadio : ScopedRadio).IsChecked = true;
+        AuthenticationBox.SelectedIndex = saved?.IsDataCenter == true ? 1 : 0;
 
         JqlBox.Text = current.Jql;
         foreach (var (site, keys) in current.AdditionalTicketKeysBySite ?? [])
@@ -80,8 +83,9 @@ public partial class SettingsWindow : FluentWindow
         HideFromCaptureSwitch.IsChecked = current.HideFromScreenCapture;
         ShowTitlesSwitch.IsChecked = current.ShowTitlesOnBar;
         TokenHint.Visibility = saved is null ? Visibility.Collapsed : Visibility.Visible;
+        ForgetSignInButton.Visibility = saved is null ? Visibility.Collapsed : Visibility.Visible;
 
-        if (firstRun)
+        if (firstRun && !IsDataCenter)
             IntroText.Text = "Welcome! Connect to Jira Cloud with your Atlassian account email and an API token " +
                              "(the same details Jira Assistant uses for token sign-in).";
         if (message is not null)
@@ -94,15 +98,38 @@ public partial class SettingsWindow : FluentWindow
 
     /// <summary>The credentials to store (valid when the dialog returns true).</summary>
     public StoredCredentials? Credentials { get; private set; }
+    internal bool ForgetSignIn { get; private set; }
 
-    private bool IsScoped => ScopedRadio.IsChecked == true;
+    internal bool IsDataCenter => AuthenticationBox.SelectedIndex == 1;
+    private bool IsScoped => !IsDataCenter && ScopedRadio.IsChecked == true;
+    private Uri ReadSite() => JiraConnection.NormalizeConnectionSite(SiteBox.Text, IsDataCenter);
+
+    private void Authentication_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (SecretLabel is null) return;
+        TokenBox.Clear();
+        IntroText.Text = IsDataCenter
+            ? "Use this compatibility option when your Jira administrator allows username and password sign-in for the REST API."
+            : "Connect to Jira Cloud with your Atlassian account email and an API token.";
+        SiteBox.PlaceholderText = IsDataCenter ? "https://jira.company.com/jira" : "yourcompany.atlassian.net";
+        SiteBox.ToolTip = IsDataCenter ? "Enter the HTTPS base URL, including the Jira context path if used." : "Enter your Jira Cloud site address.";
+        LoginLabel.Content = IsDataCenter ? "_Username" : "_Email";
+        EmailBox.PlaceholderText = IsDataCenter ? "Jira username" : "you@company.com";
+        EmailBox.ToolTip = IsDataCenter ? "The Jira Data Center account username." : "The Atlassian account email that owns the API token.";
+        SecretLabel.Content = IsDataCenter ? "_Password" : "API _token";
+        TokenBox.ToolTip = IsDataCenter ? "Enter your Jira Data Center password." : "Paste a Jira Cloud API token.";
+        TokenHint.Text = "Windows Credential Manager stores the sign-in. Leave the secret blank to reuse it for the saved connection.";
+        CreateTokenLink.Visibility = TokenTypePanel.Visibility = IsDataCenter ? Visibility.Collapsed : Visibility.Visible;
+        TokenType_Changed(sender, e);
+        UpdateAdditionalTicketSite();
+    }
 
     private void TokenType_Changed(object sender, RoutedEventArgs e)
     {
         // Raised during InitializeComponent before all controls exist.
-        if (ScopedPanel is null || ClassicWarning is null) return;
+        if (ScopedPanel is null || ClassicWarning is null || AuthenticationBox is null) return;
         ScopedPanel.Visibility = IsScoped ? Visibility.Visible : Visibility.Collapsed;
-        ClassicWarning.Visibility = IsScoped ? Visibility.Collapsed : Visibility.Visible;
+        ClassicWarning.Visibility = IsScoped || IsDataCenter ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void SiteBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
@@ -110,17 +137,17 @@ public partial class SettingsWindow : FluentWindow
         if (!_ticketDraftsLoaded) return;
         var previous = _additionalTicketSite;
         UpdateAdditionalTicketSite();
-        if (!string.Equals(previous, _additionalTicketSite, StringComparison.OrdinalIgnoreCase))
-            CloudIdBox.Text = string.Equals(_additionalTicketSite, _saved?.SiteUrl, StringComparison.OrdinalIgnoreCase)
+        if (!string.Equals(previous, _additionalTicketSite, StringComparison.Ordinal))
+            CloudIdBox.Text = string.Equals(_additionalTicketSite, _saved?.SiteUrl, StringComparison.Ordinal)
                 ? _saved?.CloudId ?? string.Empty : string.Empty;
     }
 
     private void UpdateAdditionalTicketSite()
     {
         string? site;
-        try { site = JiraConnection.NormalizeSiteUrl(SiteBox.Text).AbsoluteUri; }
+        try { site = ReadSite().AbsoluteUri; }
         catch (ArgumentException) { site = null; }
-        if (string.Equals(_additionalTicketSite, site, StringComparison.OrdinalIgnoreCase)) return;
+        if (!_ticketDraftsLoaded || string.Equals(_additionalTicketSite, site, StringComparison.Ordinal)) return;
 
         if (_additionalTicketSite is { } previous) _additionalTicketDrafts[previous] = AdditionalTicketsBox.Text;
         _additionalTicketSite = site;
@@ -160,10 +187,18 @@ public partial class SettingsWindow : FluentWindow
     /// </summary>
     private string? ResolveToken(Uri site)
     {
-        if (!string.IsNullOrEmpty(TokenBox.Password)) return TokenBox.Password.Trim();
-        return _saved is not null && string.Equals(_saved.SiteUrl, site.ToString(), StringComparison.OrdinalIgnoreCase)
-            ? _saved.ApiToken
-            : null;
+        var entered = TokenBox.Password;
+        if (entered.Length > 0) return IsDataCenter ? entered : entered.Trim();
+        return _saved?.ReuseSecret(site, EmailBox.Text.Trim(), IsDataCenter);
+    }
+
+    private void ForgetSignIn_Click(object sender, RoutedEventArgs e)
+    {
+        var result = System.Windows.MessageBox.Show(this, "Remove the saved Jira sign-in from Windows Credential Manager?",
+            "Forget Jira sign-in", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        if (result != MessageBoxResult.Yes) return;
+        ForgetSignIn = true;
+        DialogResult = true;
     }
 
     private void CreateToken_Click(object sender, RoutedEventArgs e) =>
@@ -219,10 +254,10 @@ public partial class SettingsWindow : FluentWindow
             return;
         }
 
-        var site = JiraConnection.NormalizeSiteUrl(SiteBox.Text);
+        var site = ReadSite();
         Credentials = new StoredCredentials(site.ToString(), EmailBox.Text.Trim(), ResolveToken(site)!,
-            IsScoped ? _testedCloudId : null);
-        var siteKeys = new Dictionary<string, string[]>(Result.AdditionalTicketKeysBySite ?? [], StringComparer.OrdinalIgnoreCase);
+            IsScoped ? _testedCloudId : null, IsDataCenter);
+        var siteKeys = new Dictionary<string, string[]>(Result.AdditionalTicketKeysBySite ?? [], StringComparer.Ordinal);
         if (additionalKeys.Length == 0) siteKeys.Remove(site.AbsoluteUri);
         else siteKeys[site.AbsoluteUri] = additionalKeys;
         Result = new AppSettings
@@ -309,7 +344,7 @@ public partial class SettingsWindow : FluentWindow
         Uri site;
         try
         {
-            site = JiraConnection.NormalizeSiteUrl(SiteBox.Text);
+            site = ReadSite();
         }
         catch (ArgumentException ex)
         {
@@ -319,10 +354,11 @@ public partial class SettingsWindow : FluentWindow
 
         var email = EmailBox.Text.Trim();
         var token = ResolveToken(site);
-        if (email.Length == 0 || string.IsNullOrEmpty(token))
+        if (email.Length == 0 || string.IsNullOrEmpty(token) || (IsDataCenter && email.Contains(':')))
         {
             var siteChanged = _saved is not null && string.IsNullOrEmpty(TokenBox.Password);
-            ShowStatus(InfoBarSeverity.Error, siteChanged
+            ShowStatus(InfoBarSeverity.Error, IsDataCenter ? "Enter the username and password for this Jira Data Center site. The username cannot contain a colon."
+                : siteChanged
                 ? "You changed the Jira site – enter the API token for that site."
                 : "Email and API token are required.");
             return TestOutcome.Invalid;
@@ -340,9 +376,11 @@ public partial class SettingsWindow : FluentWindow
             }
 
             using var http = JiraClient.CreateHttpClient();
-            var me = await new JiraClient(http, new JiraConnection(site, email, token, cloudId)).GetMyselfAsync();
+            var me = await new JiraClient(http, new JiraConnection(site, email, token, cloudId, IsDataCenter)).GetMyselfAsync();
             _testedCloudId = cloudId;
-            if (IsScoped)
+            if (IsDataCenter)
+                ShowStatus(InfoBarSeverity.Success, "Connected to Jira Data Center.");
+            else if (IsScoped)
                 ShowStatus(InfoBarSeverity.Success, $"Connected as {me.DisplayName} with a scoped token.");
             else
                 ShowStatus(InfoBarSeverity.Warning, $"Connected as {me.DisplayName}. This classic token has full access to your Atlassian account – a scoped token is safer.");
