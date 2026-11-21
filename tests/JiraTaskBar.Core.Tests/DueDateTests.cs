@@ -49,16 +49,14 @@ public class DueDateTests
             DueDateProgress.Calculate(parsed, now.AddHours(1), TimeZoneInfo.Utc).RemainingFraction);
     }
 
-    [Theory]
-    [InlineData(false, 115)]
-    [InlineData(true, 120)]
-    public void Resolution_pie_uses_the_creation_to_deadline_interval(bool paused, int remainingMinutes)
+    [Fact]
+    public void Active_resolution_pie_uses_the_creation_to_deadline_interval()
     {
         var created = new DateTimeOffset(2026, 11, 19, 8, 0, 0, TimeSpan.Zero);
         var issue = Issue(null) with
         {
             CreatedAt = created,
-            Sla = new JiraSla("Time to resolution", false, false, paused, 600_000, 300_000)
+            Sla = new JiraSla("Time to resolution", false, false, false, 600_000, 300_000)
             {
                 ObservedAt = created.AddHours(2),
                 BreachAt = created.AddHours(4),
@@ -68,8 +66,30 @@ public class DueDateTests
 
         Assert.Equal(0.5, DueDateProgress.CalculateUrgency(issue, observed, TimeZoneInfo.Utc).RemainingFraction);
         var state = DueDateProgress.CalculateUrgency(issue, observed.AddMinutes(5), TimeZoneInfo.Utc);
-        Assert.Equal(remainingMinutes / 240d, state.RemainingFraction);
+        Assert.Equal(115d / 240, state.RemainingFraction);
         Assert.Contains("of the creation-to-deadline interval remains", state.Tooltip);
+    }
+
+    [Fact]
+    public void Paused_resolution_pie_keeps_jira_remaining_time_across_refreshes()
+    {
+        var created = new DateTimeOffset(2026, 11, 19, 8, 0, 0, TimeSpan.Zero);
+        var observed = created.AddHours(2);
+        var sla = new JiraSla("Time to resolution", false, false, true, 600_000, 300_000)
+        {
+            ObservedAt = observed,
+            BreachAt = created.AddHours(4),
+        };
+        var issue = Issue(null) with { CreatedAt = created, Sla = sla };
+        var initial = DueDateProgress.CalculateUrgency(issue, observed, TimeZoneInfo.Utc);
+
+        var nextObservation = observed.AddHours(1);
+        var refreshed = issue with { Sla = sla with { ObservedAt = nextObservation } };
+        var afterRefresh = DueDateProgress.CalculateUrgency(refreshed, nextObservation, TimeZoneInfo.Utc);
+        Assert.Equal(0.5, initial.RemainingFraction);
+        Assert.Equal(initial.RemainingFraction, afterRefresh.RemainingFraction);
+        Assert.Contains("Paused", afterRefresh.Tooltip);
+        Assert.Contains("0d 0h 5m 0s", afterRefresh.Tooltip);
     }
 
     [Fact]
