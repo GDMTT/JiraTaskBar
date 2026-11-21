@@ -32,9 +32,9 @@ internal static class WorklogCalendarData
         var discoveryFailed = false;
         try
         {
-            // Include overnight starts and account for Jira indexing dates in a different time zone.
-            discovered = await client.FindWorklogIssuesAsync(me.AccountId, range.Start.AddDays(-2),
-                range.EndExclusive.AddDays(1), ct);
+            // Jira searches by start date. Older entries may still overlap the displayed range.
+            // Allow for Jira indexing dates in a different time zone at the upper boundary.
+            discovered = await client.FindWorklogIssuesAsync(me.AccountId, range.EndExclusive.AddDays(2), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {

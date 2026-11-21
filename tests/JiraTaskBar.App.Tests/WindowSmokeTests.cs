@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.Http;
 using System.Runtime.ExceptionServices;
 using System.Reflection;
 using System.Windows;
@@ -277,6 +278,22 @@ public class WindowSmokeTests
             Assert.Equal("Total: 3:35:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
             Assert.Equal(new WorklogCalendarRange(sunday.AddDays(1), sunday.AddDays(8)),
                 CalendarField<WorklogCalendarRange>(calendar, "_timeRange"));
+
+            settings.CalendarFirstDayOfWeek = DayOfWeek.Sunday;
+            var overlapOnlyIssue = outsideIssue with { Key = "OTHER-43" };
+            client.Discovered = [outsideIssue, overlapOnlyIssue];
+            client.Worklogs = [.. client.Worklogs!, Worklog("7", overlapOnlyIssue.Key, -3, 12, 0, 72 * 60)];
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal("Total: 16:05:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+
+            ((ComboBox)calendar.FindName("ViewModeBox")).SelectedIndex = (int)WorklogCalendarView.Month;
+            Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);
+            var scheduler = (Grid)calendar.FindName("SchedulerHost");
+            var month = Assert.IsType<Grid>(Assert.Single(scheduler.Children.Cast<UIElement>()));
+            var december = Assert.Single(month.Children.OfType<Border>(), cell => Equals(cell.Tag, new DateOnly(2026, 12, 1)));
+            december.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+                { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
+            Assert.Equal(new DateOnly(2027, 1, 3), client.DiscoveryUntil);
         }
         finally { calendar.Close(); }
     }
@@ -371,12 +388,14 @@ public class WindowSmokeTests
     {
         var started = new DateTimeOffset(DateTime.Today.AddHours(9));
         var original = new JiraWorklog("123", issue.Key, started, 60, "Tester", "Original description");
-        var client = new NullJiraClient { Worklogs = [original] };
+        var client = new NullJiraClient { Worklogs = [original], FailDiscovery = true };
         var calendar = new WorklogCalendarWindow(issue, client, () => [], resolutionMinutes: 5);
         try
         {
             calendar.Show();
             calendar.RefreshAsync().GetAwaiter().GetResult();
+            var warning = (TextBlock)calendar.FindName("LoadWarningText");
+            Assert.Equal(Visibility.Visible, warning.Visibility);
             calendar.UpdateLayout();
             var scroll = CalendarField<ScrollViewer>(calendar, "_timeScroll");
             scroll.ScrollToVerticalOffset(1500);
@@ -445,7 +464,11 @@ public class WindowSmokeTests
                 calendar.UpdateLayout();
                 Assert.Equal(offset, CalendarField<ScrollViewer>(calendar, "_timeScroll").VerticalOffset, 1);
                 Assert.Equal(moved ? 600 : 1200, client.Worklogs!.Single().TimeSpentSeconds);
+                Assert.Equal(Visibility.Visible, warning.Visibility);
             }
+            client.FailDiscovery = false;
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal(Visibility.Collapsed, warning.Visibility);
 
             // A concurrent server edit must leave the editor open and avoid another PUT.
             client.Worklogs = [original with { TimeSpentSeconds = 120 }];
@@ -600,14 +623,19 @@ public class WindowSmokeTests
     private sealed class NullJiraClient : IJiraClient
     {
         public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }
-        public IReadOnlyList<JiraIssue> Discovered { get; init; } = [];
+        public IReadOnlyList<JiraIssue> Discovered { get; set; } = [];
+        public bool FailDiscovery { get; set; }
+        public DateOnly? DiscoveryUntil { get; private set; }
         public JiraWorklog? UpdatedWorklog { get; set; }
         public int UpdatedSeconds { get; private set; }
         public (string IssueKey, string WorklogId, string Text)? AddedWorklogComment { get; private set; }
         public JiraConnection Connection { get; } = new(new Uri("https://example.atlassian.net/"), "a@b.c", "t");
         public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => Task.FromResult(new JiraUser("test-account", "Tester", null));
-        public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until, CancellationToken ct = default) =>
-            Task.FromResult(Discovered);
+        public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until, CancellationToken ct = default)
+        {
+            DiscoveryUntil = until;
+            return FailDiscovery ? throw new HttpRequestException("search unavailable") : Task.FromResult(Discovered);
+        }
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
             Task.FromResult(JiraDurationSettings.Default);
         public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();

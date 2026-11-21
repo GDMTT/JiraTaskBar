@@ -44,7 +44,7 @@ public class WorklogCalendarDataTests
         var result = await WorklogCalendarData.LoadAsync(client, [Issue("ABC-1")], Issue("ABC-1"),
             CalendarRange, CancellationToken.None, ["done-42", "LOCAL-2"]);
 
-        Assert.Equal(("my-account", new DateOnly(2026, 11, 13), new DateOnly(2026, 11, 23)), client.DiscoveryQuery);
+        Assert.Equal(("my-account", new DateOnly(2026, 11, 24)), client.DiscoveryQuery);
         Assert.Equal(["ABC-1", "DONE-42", "LOCAL-2"], client.RequestedKeys);
         Assert.Equal(["ABC-1", "DONE-42", "LOCAL-2"], result.Worklogs.Select(worklog => worklog.IssueKey));
         Assert.Equal(1800, result.Worklogs.Sum(worklog => worklog.TimeSpentSeconds));
@@ -84,7 +84,7 @@ public class WorklogCalendarDataTests
         public string? FailingKey { get; init; }
         public bool FailDiscovery { get; init; }
         public IReadOnlyList<JiraIssue> Discovered { get; init; } = [];
-        public (string AccountId, DateOnly From, DateOnly Until)? DiscoveryQuery { get; private set; }
+        public (string AccountId, DateOnly Until)? DiscoveryQuery { get; private set; }
 
         public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default)
         {
@@ -98,9 +98,9 @@ public class WorklogCalendarDataTests
         }
 
         public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => Task.FromResult(new JiraUser("my-account", "Me", null));
-        public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until, CancellationToken ct = default)
+        public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until, CancellationToken ct = default)
         {
-            DiscoveryQuery = (accountId, from, until);
+            DiscoveryQuery = (accountId, until);
             return FailDiscovery ? throw new HttpRequestException("search unavailable") : Task.FromResult(Discovered);
         }
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) => throw new NotSupportedException();

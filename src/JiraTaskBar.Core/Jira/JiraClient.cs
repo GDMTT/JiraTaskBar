@@ -11,7 +11,7 @@ public interface IJiraClient
     Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
-    Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until, CancellationToken ct = default);
+    Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until, CancellationToken ct = default);
     Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
     Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
@@ -136,11 +136,11 @@ public sealed class JiraClient : IJiraClient
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
         SearchIssuesAsync(jql, priorities, MaxIssues, ct);
 
-    public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until,
+    public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until,
         CancellationToken ct = default)
     {
         var author = accountId.Replace("\\", "\\\\").Replace("\"", "\\\"");
-        var jql = FormattableString.Invariant($"worklogAuthor = \"{author}\" AND worklogDate >= \"{from:yyyy-MM-dd}\" AND worklogDate < \"{until:yyyy-MM-dd}\"");
+        var jql = FormattableString.Invariant($"worklogAuthor = \"{author}\" AND worklogDate < \"{until:yyyy-MM-dd}\"");
         return SearchIssuesAsync(jql, [], null, ct);
     }
 

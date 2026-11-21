@@ -80,7 +80,7 @@ public class JiraClientTests
     }
 
     [Fact]
-    public async Task Worklog_issue_search_uses_author_and_dates_and_reads_past_the_queue_limit()
+    public async Task Worklog_issue_search_includes_older_starts_and_reads_past_the_queue_limit()
     {
         var (client, handler) = Create();
         for (var page = 0; page < 3; page++)
@@ -93,10 +93,10 @@ public class JiraClientTests
             }));
         }
 
-        var issues = await client.FindWorklogIssuesAsync("site:account", new(2026, 11, 13), new(2026, 11, 23));
+        var issues = await client.FindWorklogIssuesAsync("site:account", new(2026, 11, 24));
 
         Assert.Equal(300, issues.Count);
-        Assert.Contains("worklogAuthor = \"site:account\" AND worklogDate >= \"2026-11-13\" AND worklogDate < \"2026-11-23\"",
+        Assert.Contains("worklogAuthor = \"site:account\" AND worklogDate < \"2026-11-24\"&",
             Uri.UnescapeDataString(handler.Requests[0].PathAndQuery));
         Assert.Contains("nextPageToken=page%202", handler.Requests[2].PathAndQuery);
     }

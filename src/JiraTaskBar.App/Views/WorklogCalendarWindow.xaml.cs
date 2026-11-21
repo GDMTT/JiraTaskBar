@@ -144,6 +144,7 @@ public partial class WorklogCalendarWindow
         _refreshPending = false;
         var version = ++_loadVersion;
         var selectedIssue = _issue;
+        var range = CurrentRange();
         _load?.Cancel();
         var load = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
         _load = load;
@@ -151,9 +152,10 @@ public partial class WorklogCalendarWindow
         StatusText.Text = "Loading your Jira worklogs…";
         try
         {
-            var result = await WorklogCalendarData.LoadAsync(_client, _issues(), selectedIssue, CurrentRange(),
+            var result = await WorklogCalendarData.LoadAsync(_client, _issues(), selectedIssue, range,
                 load.Token, _localIssueKeys);
-            if (version != _loadVersion || !_issue.Key.Equals(selectedIssue.Key, StringComparison.OrdinalIgnoreCase))
+            if (version != _loadVersion || range != CurrentRange() ||
+                !_issue.Key.Equals(selectedIssue.Key, StringComparison.OrdinalIgnoreCase))
                 return false;
             if (_calendarEdit is not null || _savingEdit)
             {
@@ -163,9 +165,9 @@ public partial class WorklogCalendarWindow
             _worklogs = result.Worklogs;
             _worklogIssues = result.DiscoveredIssues;
             _accountId = result.AccountId;
-            StatusText.Text = $"Loaded your Jira worklogs from {result.IssueKeys.Count - result.FailedIssueCount} ticket(s)." +
-                (result.DiscoveryFailed ? " Jira search failed. Only known tickets were checked." : string.Empty) +
-                (result.FailedIssueCount == 0 ? string.Empty : $" {result.FailedIssueCount} ticket(s) could not be loaded.");
+            StatusText.Text = $"Loaded your Jira worklogs from {result.IssueKeys.Count - result.FailedIssueCount} ticket(s).";
+            SetLoadWarning((result.DiscoveryFailed ? "Jira search failed. Only known tickets were checked. " : string.Empty) +
+                (result.FailedIssueCount == 0 ? string.Empty : $"{result.FailedIssueCount} ticket(s) could not be loaded."));
             RenderScheduler();
             return true;
         }
@@ -175,8 +177,11 @@ public partial class WorklogCalendarWindow
         }
         catch (Exception ex)
         {
-            if (version == _loadVersion)
+            if (version == _loadVersion && range == CurrentRange())
+            {
                 StatusText.Text = $"Could not load worklogs: {ex.Message}";
+                SetLoadWarning("The calendar could not be refreshed. Worklogs and totals may be incomplete.");
+            }
             return false;
         }
         finally
@@ -188,6 +193,12 @@ public partial class WorklogCalendarWindow
             }
             load.Dispose();
         }
+    }
+
+    private void SetLoadWarning(string warning)
+    {
+        LoadWarningText.Text = warning.TrimEnd();
+        LoadWarningText.Visibility = warning.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private async void ViewMode_Changed(object sender, SelectionChangedEventArgs e)
@@ -364,19 +375,19 @@ public partial class WorklogCalendarWindow
         ToolTip = EntryTooltip(entry),
     };
 
-    private void MonthDay_Click(object sender, MouseButtonEventArgs e)
+    private async void MonthDay_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Border { Tag: DateOnly date }) return;
+        var previousRange = CurrentRange();
         _anchor = date;
         if (e.ClickCount >= 2)
         {
             _view = WorklogCalendarView.Day;
             ViewModeBox.SelectedIndex = (int)_view;
         }
-        else
-        {
-            RenderScheduler();
-        }
+        else if (CurrentRange() != previousRange)
+            await ShowRangeAsync();
+        else RenderScheduler();
     }
 
     private void RenderTimeGrid(WorklogCalendarRange range, IReadOnlyList<CalendarEntry> entries,
