@@ -16,6 +16,7 @@ public sealed partial class BarViewModel : ObservableObject
     private int _pinnedCount;
     private IJiraClient? _slaOwner;
     private long _lastFilterMinute = long.MinValue;
+    private bool _refreshRequested;
 
     public BarViewModel(AppController app)
     {
@@ -75,6 +76,12 @@ public sealed partial class BarViewModel : ObservableObject
     public string EmptyText => IsRefreshing ? "Loading…" : HasStatus ? "⚠ " + StatusMessage :
         Filter.IsActive ? "No tickets match your filters" : "No tickets match your query";
 
+    internal void RequestRefresh()
+    {
+        if (IsRefreshing) _refreshRequested = true;
+        else _ = RefreshAsync();
+    }
+
     [RelayCommand]
     public async Task RefreshAsync()
     {
@@ -120,6 +127,11 @@ public sealed partial class BarViewModel : ObservableObject
         {
             IsRefreshing = false;
             PendingWorklogs = _app.Worklogs.PendingCount;
+            if (_refreshRequested)
+            {
+                _refreshRequested = false;
+                _ = RefreshAsync();
+            }
         }
     }
 
