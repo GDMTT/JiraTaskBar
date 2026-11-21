@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
 using CheckBox = System.Windows.Controls.CheckBox;
 using MessageBoxButton = System.Windows.MessageBoxButton;
 using MessageBoxResult = System.Windows.MessageBoxResult;
@@ -103,6 +104,12 @@ public partial class SettingsWindow : FluentWindow
     internal bool IsDataCenter => AuthenticationBox.SelectedIndex == 1;
     private bool IsScoped => !IsDataCenter && ScopedRadio.IsChecked == true;
     private Uri ReadSite() => JiraConnection.NormalizeConnectionSite(SiteBox.Text, IsDataCenter);
+
+    private void SettingsTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ReferenceEquals(e.Source, sender) && sender is TabControl { SelectedItem: TabItem selectedTab })
+            selectedTab.BringIntoView();
+    }
 
     private void Authentication_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
