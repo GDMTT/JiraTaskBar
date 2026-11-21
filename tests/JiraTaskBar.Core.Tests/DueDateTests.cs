@@ -48,4 +48,46 @@ public class DueDateTests
         Assert.True(DueDateProgress.Calculate(parsed, now, TimeZoneInfo.Utc).RemainingFraction >
             DueDateProgress.Calculate(parsed, now.AddHours(1), TimeZoneInfo.Utc).RemainingFraction);
     }
+
+    [Fact]
+    public void Active_sla_counts_down_when_the_projected_deadline_matches_its_remaining_time()
+    {
+        var observed = new DateTimeOffset(2026, 11, 19, 12, 0, 0, TimeSpan.Zero);
+        var sla = new JiraSla("Response", false, false, false, 600_000, 300_000)
+        {
+            ObservedAt = observed,
+            BreachAt = observed.AddMinutes(5),
+        };
+        var issue = Issue(null) with { Sla = sla };
+
+        var state = DueDateProgress.CalculateUrgency(issue, observed.AddMinutes(2), TimeZoneInfo.Utc);
+        Assert.Equal(0.3, state.RemainingFraction);
+        Assert.Contains("Estimated remaining", state.Tooltip);
+        var estimatedDeadline = DueDateProgress.CalculateUrgency(issue, observed.AddMinutes(5), TimeZoneInfo.Utc);
+        Assert.Equal(0d, estimatedDeadline.RemainingFraction);
+        Assert.Equal(DueDateKind.Upcoming, estimatedDeadline.Kind);
+        var confirmed = DueDateProgress.CalculateUrgency(issue with { Sla = sla with { Breached = true } },
+            observed.AddMinutes(5), TimeZoneInfo.Utc);
+        Assert.Equal(DueDateKind.Overdue, confirmed.Kind);
+    }
+
+    [Theory]
+    [InlineData(true, 5)]
+    [InlineData(false, 65)]
+    public void Paused_or_calendar_limited_sla_retains_the_jira_snapshot(bool paused, int minutesUntilBreach)
+    {
+        var observed = new DateTimeOffset(2026, 11, 19, 12, 0, 0, TimeSpan.Zero);
+        var issue = Issue(null) with
+        {
+            Sla = new JiraSla("Response", false, false, paused, 600_000, 300_000)
+            {
+                ObservedAt = observed,
+                BreachAt = observed.AddMinutes(minutesUntilBreach),
+            },
+        };
+
+        var state = DueDateProgress.CalculateUrgency(issue, observed.AddMinutes(2), TimeZoneInfo.Utc);
+        Assert.Equal(0.5, state.RemainingFraction);
+        Assert.Contains("Remaining when checked at", state.Tooltip);
+    }
 }
