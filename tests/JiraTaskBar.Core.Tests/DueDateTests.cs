@@ -152,6 +152,22 @@ public class DueDateTests
     }
 
     [Theory]
+    [InlineData(0L, false, -540_000d)]
+    [InlineData(-60_000L, false, -600_000d)]
+    [InlineData(-60_000L, true, -60_000d)]
+    public void Sla_sort_time_continues_advancing_for_overdue_running_clocks(long snapshot, bool paused, double expected)
+    {
+        var observed = new DateTimeOffset(2026, 11, 19, 12, 0, 0, TimeSpan.Zero);
+        var sla = new JiraSla("Time to Resolution", false, snapshot < 0, paused, 600_000, snapshot)
+        {
+            ObservedAt = observed,
+            BreachAt = observed.AddMilliseconds(snapshot),
+        };
+
+        Assert.Equal(expected, sla.RemainingForSort(observed.AddMinutes(9)));
+    }
+
+    [Theory]
     [InlineData(true, 5, false, 300_000L, 300_000d)]
     [InlineData(false, 65, false, 300_000L, 300_000d)]
     [InlineData(false, 5, true, 300_000L, null)]

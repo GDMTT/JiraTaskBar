@@ -32,7 +32,7 @@ public static class DueDateProgress
 
         var remaining = Math.Max(0d, snapshot);
         var label = $"Remaining when checked at {sla.ObservedAt.UtcDateTime:HH:mm:ss} UTC";
-        if (sla.HasContinuousDeadline && sla.BreachAt is { } breach)
+        if (snapshot > 0 && sla.ContinuousDeadline is { } breach)
         {
             // A projected deadline that agrees with the SLA clock indicates a continuous working interval.
             // The tolerance allows for Jira's sampling and timestamp precision.

@@ -11,13 +11,13 @@ public sealed record JiraSla(string Name, bool Completed, bool Breached, bool Pa
     public double? RemainingForSort(DateTimeOffset now)
     {
         if (Completed || RemainingMilliseconds is not { } remaining) return null;
-        return HasContinuousDeadline
-            ? Math.Min(remaining, (BreachAt!.Value - now).TotalMilliseconds)
+        return ContinuousDeadline is { } breach
+            ? Math.Min(remaining, (breach - now).TotalMilliseconds)
             : remaining;
     }
 
-    internal bool HasContinuousDeadline => !Paused && RemainingMilliseconds is > 0 and var snapshot &&
-        BreachAt is { } breach && Math.Abs((breach - ObservedAt).TotalMilliseconds - snapshot) <= 2000;
+    internal DateTimeOffset? ContinuousDeadline => !Paused && RemainingMilliseconds is { } snapshot &&
+        BreachAt is { } breach && Math.Abs((breach - ObservedAt).TotalMilliseconds - snapshot) <= 2000 ? breach : null;
 
     internal static JiraSla? Parse(JsonObject metric)
     {
