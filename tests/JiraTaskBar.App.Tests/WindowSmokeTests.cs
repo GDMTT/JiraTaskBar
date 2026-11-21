@@ -275,10 +275,19 @@ public class WindowSmokeTests
                 foreach (var (point, expected) in new[] { (before, false), (after, true) })
                 {
                     var hit = Assert.IsAssignableFrom<DependencyObject>(ticket.InputHitTest(point));
-                    Assert.Equal((second.Key, expected), bar.GetBrowserDropTarget(hit, element => ticket.TranslatePoint(point, element)));
+                    var (anchor, afterAnchor) = bar.GetBrowserDropTarget(hit, element => ticket.TranslatePoint(point, element));
+                    Assert.Equal((second.Key, expected), (anchor, afterAnchor));
+                    List<string> pins = [issue.Key, second.Key, "SD-44"];
+                    Assert.True(TicketPinOrder.Place(pins, "SD-99", anchor, afterAnchor, moveExisting: true));
+                    Assert.Equal(expected ? [issue.Key, second.Key, "SD-99", "SD-44"] :
+                        new[] { issue.Key, "SD-99", second.Key, "SD-44" }, pins);
                 }
             }
-            Assert.Equal((null, false), bar.GetBrowserDropTarget(bar, _ => default));
+            var (emptyAnchor, emptyAfter) = bar.GetBrowserDropTarget(bar, _ => default);
+            Assert.Equal((null, false), (emptyAnchor, emptyAfter));
+            List<string> emptySpacePins = [issue.Key, second.Key];
+            Assert.True(TicketPinOrder.Place(emptySpacePins, "SD-99", emptyAnchor, emptyAfter, moveExisting: true));
+            Assert.Equal([issue.Key, second.Key, "SD-99"], emptySpacePins);
         }
         finally
         {
@@ -292,15 +301,23 @@ public class WindowSmokeTests
     {
         var initial = new TaskCompletionSource<IReadOnlyList<JiraIssue>>();
         var current = new TaskCompletionSource<IReadOnlyList<JiraIssue>>();
+        var closing = new TaskCompletionSource<IReadOnlyList<JiraIssue>>();
         CancellationToken initialRequest = default;
+        CancellationToken closingRequest = default;
         var client = new NullJiraClient
         {
-            Queues = [new JiraQueue("SD", "Waiting", "status = Waiting")],
+            Queues = [new JiraQueue("SD", "Open", "status = Open"), new JiraQueue("SD", "Waiting", "status = Waiting")],
             BrowseIssues = (jql, token) =>
             {
+                if (jql == "assignee = currentUser()") return Task.FromResult<IReadOnlyList<JiraIssue>>([issue]);
                 if (jql == "status = Waiting") return current.Task;
-                initialRequest = token;
-                return initial.Task;
+                if (!initialRequest.CanBeCanceled)
+                {
+                    initialRequest = token;
+                    return initial.Task;
+                }
+                closingRequest = token;
+                return closing.Task;
             },
         };
         var window = new QueueBrowserWindow(client, "assignee = currentUser()", (_, _) => "Pinned");
@@ -312,9 +329,12 @@ public class WindowSmokeTests
             var source = (ComboBox)window.FindName("SourceBox");
             var status = (TextBlock)window.FindName("ResultsStatus");
             var grid = (DataGrid)window.FindName("TicketGrid");
+            Assert.Equal(issue.Key, Assert.IsType<QueueBrowserWindow.TicketRow>(Assert.Single(grid.Items.Cast<object>())).Issue.Key);
+
+            source.SelectedIndex = 1;
             Assert.True(initialRequest.CanBeCanceled);
             Assert.Contains("Loading", status.Text);
-            source.SelectedIndex = 1;
+            source.SelectedIndex = 2;
             Assert.True(initialRequest.IsCancellationRequested);
 
             current.SetResult([issue]);
@@ -324,8 +344,13 @@ public class WindowSmokeTests
             initial.SetResult([issue with { Key = "SD-99" }]);
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
             Assert.Equal(issue.Key, Assert.IsType<QueueBrowserWindow.TicketRow>(Assert.Single(grid.Items.Cast<object>())).Issue.Key);
+
+            source.SelectedIndex = 1;
+            Assert.True(closingRequest.CanBeCanceled);
         }
         finally { window.Close(); }
+        Assert.True(closingRequest.IsCancellationRequested);
+        closing.SetCanceled();
     }
 
     private static void AssertAddedTicketsJoinTheQueue(AppController controller, BarWindow bar, JiraIssue issue)
