@@ -298,8 +298,9 @@ public sealed class AppController : IDisposable
             Log.Error("Could not load Jira duration settings; using default duration units", ex);
         }
         var issues = await client.SearchAsync(settings.Jql, priorities);
-        var configuredKeys = settings.AdditionalTicketKeysBySite?.GetValueOrDefault(client.Connection.SiteUrl.AbsoluteUri) ?? [];
-        var additionalKeys = configuredKeys.Where(key => !string.IsNullOrWhiteSpace(key)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var configuredKeys = (settings.AdditionalTicketKeysBySite?.GetValueOrDefault(client.Connection.SiteUrl.AbsoluteUri) ?? [])
+            .Where(key => !string.IsNullOrWhiteSpace(key)).ToArray();
+        var additionalKeys = configuredKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var obsoleteKey in additionalTicketCache.Keys.Where(key => !additionalKeys.Contains(key)).ToArray())
             additionalTicketCache.Remove(obsoleteKey);
         if (additionalKeys.Count == 0) return (issues, null);
@@ -325,9 +326,13 @@ public sealed class AppController : IDisposable
                 else additionalTicketCache.Remove(lookup.RequestedKey);
             }
         }
-        var allIssues = IssueOrdering.Sort(issues.Concat(lookups.Select(lookup => lookup.Issue).OfType<JiraIssue>())
-            .Concat(additionalTicketCache.Values)
-            .DistinctBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase));
+        var currentByKey = issues.Concat(lookups.Select(lookup => lookup.Issue).OfType<JiraIssue>())
+            .GroupBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var pinned = configuredKeys.Select(key => additionalTicketCache.GetValueOrDefault(key)).OfType<JiraIssue>()
+            .Select(issue => currentByKey.GetValueOrDefault(issue.Key, issue));
+        var displayedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allIssues = pinned.Concat(issues).Where(issue => displayedKeys.Add(issue.Key)).ToArray();
         var warning = failed switch
         {
             0 => null,

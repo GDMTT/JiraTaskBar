@@ -128,6 +128,32 @@ public partial class SettingsWindow : FluentWindow
         AdditionalTicketsBox.Text = site is not null && _additionalTicketDrafts.TryGetValue(site, out var text) ? text : string.Empty;
     }
 
+    private void MoveTicketLineUp_Click(object sender, RoutedEventArgs e) => MoveTicketLine(-1);
+
+    private void MoveTicketLineDown_Click(object sender, RoutedEventArgs e) => MoveTicketLine(1);
+
+    private void MoveTicketLine(int direction)
+    {
+        var text = AdditionalTicketsBox.Text;
+        var caret = Math.Clamp(AdditionalTicketsBox.CaretIndex, 0, text.Length);
+        var line = NormalizeLineBreaks(text[..caret]).Count(character => character == '\n');
+        var lines = NormalizeLineBreaks(text).Split('\n');
+        if (line >= lines.Length || string.IsNullOrWhiteSpace(lines[line])) return;
+
+        var destination = line + direction;
+        while (destination >= 0 && destination < lines.Length && string.IsNullOrWhiteSpace(lines[destination]))
+            destination += direction;
+        if (destination < 0 || destination >= lines.Length) return;
+
+        (lines[line], lines[destination]) = (lines[destination], lines[line]);
+        AdditionalTicketsBox.Text = string.Join(Environment.NewLine, lines);
+        var selection = lines.Take(destination).Sum(value => value.Length + Environment.NewLine.Length);
+        AdditionalTicketsBox.Focus();
+        AdditionalTicketsBox.Select(selection, lines[destination].Length);
+    }
+
+    private static string NormalizeLineBreaks(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
+
     /// <summary>
     /// The token to use: a newly typed one, or the saved one if the site is unchanged.
     /// A saved token is never re-pointed at a different site without being re-entered.
@@ -150,8 +176,9 @@ public partial class SettingsWindow : FluentWindow
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
         var additionalKeys = AdditionalTicketsBox.Text.Split(['\r', '\n', ',', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(key => key.ToUpperInvariant()).Distinct(StringComparer.Ordinal).ToArray();
+            .Select(key => key.ToUpperInvariant()).Where(seenKeys.Add).ToArray();
         if (additionalKeys.FirstOrDefault(key => !TicketKeyPattern().IsMatch(key)) is { } invalidKey)
         {
             SettingsTabs.SelectedItem = AddTicketsTab;

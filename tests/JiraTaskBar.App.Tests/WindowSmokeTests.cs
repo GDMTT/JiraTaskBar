@@ -193,6 +193,15 @@ public class WindowSmokeTests
             Assert.Same(settings.FindName("JiraTab"), tabs.SelectedItem);
             var additionalTickets = (TextBox)settings.FindName("AdditionalTicketsBox");
             Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
+            tabs.SelectedItem = settings.FindName("AddTicketsTab");
+            additionalTickets.CaretIndex = additionalTickets.Text.Length;
+            var moveUp = (ButtonBase)settings.FindName("MoveTicketLineUp");
+            Assert.True(moveUp.IsTabStop);
+            moveUp.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert.Equal(string.Join(Environment.NewLine, "TEST-2", "TEST-1"), additionalTickets.Text);
+            Assert.Equal("TEST-2", additionalTickets.SelectedText);
+            ((ButtonBase)settings.FindName("MoveTicketLineDown")).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
             var siteBox = (TextBox)settings.FindName("SiteBox");
             siteBox.Text = "other.atlassian.net";
             Assert.Equal("OTHER-9", additionalTickets.Text);
@@ -249,10 +258,11 @@ public class WindowSmokeTests
     private static void AssertAddedTicketsJoinTheQueue(AppController controller, BarWindow bar, JiraIssue issue)
     {
         const string requestedKey = "OLD-2";
-        var manualIssue = issue with { Key = "TEST-2", Priority = new JiraPriority("1", "Highest", 0) };
+        var manualIssue = issue with { Key = "TEST-2", Priority = new JiraPriority("4", "Low", 4) };
+        var queueOnly = issue with { Key = "TEST-1", Priority = new JiraPriority("1", "Highest", 1) };
         var client = new NullJiraClient
         {
-            QueueIssues = [issue],
+            QueueIssues = [queueOnly, issue],
             AddedLookups = [new(requestedKey, manualIssue), new("TEST-999", null)],
         };
         var clientProperty = typeof(AppController).GetProperty(nameof(AppController.Client))!;
@@ -264,7 +274,7 @@ public class WindowSmokeTests
         {
             var (issues, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
             Assert.Equal([requestedKey, "TEST-999"], client.RequestedAddedKeys.Order());
-            Assert.Equal([manualIssue.Key, issue.Key], issues.Select(ticket => ticket.Key));
+            Assert.Equal([issue.Key, manualIssue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
             Assert.Contains("one added ticket", warning);
             controller.Bar.StatusMessage = warning;
             bar.UpdateLayout();
@@ -272,14 +282,31 @@ public class WindowSmokeTests
             Assert.Equal(Visibility.Visible, indicator.Visibility);
             Assert.Equal(warning, indicator.ToolTip);
 
+            var newOrder = new[] { requestedKey, issue.Key, "TEST-999" };
+            var site = client.Connection.SiteUrl.AbsoluteUri;
+            controller.Settings.AdditionalTicketKeysBySite[site] = newOrder;
+            var store = new JsonFileStore<AppSettings>(AppPaths.File("pin-order-test.json"));
+            store.Save(controller.Settings);
+            var persisted = store.Load()!.AdditionalTicketKeysBySite[site];
+            Assert.Equal(newOrder, persisted);
+            controller.Settings.AdditionalTicketKeysBySite[site] = persisted;
+            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([manualIssue.Key, issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+
+            client.QueueIssues = [queueOnly];
+            client.AddedLookups = [new(requestedKey, manualIssue), new(issue.Key, issue), new("TEST-999", null)];
+            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([manualIssue.Key, issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+            client.QueueIssues = [queueOnly, issue];
+
             client.AddedLookups = [new(requestedKey, null, CanRetry: true), new("TEST-999", null)];
             (issues, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
-            Assert.Equal([manualIssue.Key, issue.Key], issues.Select(ticket => ticket.Key));
+            Assert.Equal([manualIssue.Key, issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
             Assert.Contains("previously loaded", warning);
 
             client.AddedLookups = [new(requestedKey, null), new("TEST-999", null)];
             (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
-            Assert.Equal(issue.Key, Assert.Single(issues).Key);
+            Assert.Equal([issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
             client.AddedLookups = [new(requestedKey, manualIssue), new("TEST-999", null)];
             _ = controller.FetchIssuesAsync().GetAwaiter().GetResult();
 
@@ -766,7 +793,7 @@ public class WindowSmokeTests
 
     private sealed class NullJiraClient : IJiraClient
     {
-        public IReadOnlyList<JiraIssue> QueueIssues { get; init; } = [];
+        public IReadOnlyList<JiraIssue> QueueIssues { get; set; } = [];
         public IReadOnlyList<JiraIssueLookup> AddedLookups { get; set; } = [];
         public IReadOnlyList<string> RequestedAddedKeys { get; private set; } = [];
         public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }
