@@ -580,6 +580,15 @@ public class WindowSmokeTests
             controller.Settings.SortTicketsDescending = true;
             bar.RefreshDisplay();
             Assert.Equal([firstPin.Key, secondPin.Key, slow.Key, fast.Key, missing.Key], bar.Tickets.Select(t => t.Key));
+            controller.Settings.TicketGrouping = TicketGrouping.Project;
+            bar.RefreshDisplay();
+            Assert.Equal([firstPin.Key, secondPin.Key, slow.Key, missing.Key, fast.Key], bar.Tickets.Select(t => t.Key));
+            Assert.Equal(["A", "Z"], bar.Tickets.Select(t => t.GroupLabel).Where(label => !string.IsNullOrEmpty(label)));
+            controller.Settings.TicketGrouping = TicketGrouping.Priority;
+            controller.Settings.TicketSort = TicketSort.Priority;
+            bar.RefreshDisplay();
+            Assert.Equal([firstPin.Key, secondPin.Key, fast.Key, slow.Key, missing.Key], bar.Tickets.Select(t => t.Key));
+            Assert.Equal(["High", "Normal"], bar.Tickets.Select(t => t.GroupLabel).Where(label => !string.IsNullOrEmpty(label)));
             controller.Settings.TicketGrouping = TicketGrouping.None;
             bar.RefreshDisplay();
             Assert.All(bar.Tickets, t => Assert.Null(t.GroupLabel));

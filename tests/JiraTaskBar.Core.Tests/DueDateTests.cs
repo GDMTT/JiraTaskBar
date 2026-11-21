@@ -134,4 +134,38 @@ public class DueDateTests
         Assert.Equal(0.5, state.RemainingFraction);
         Assert.Contains("Remaining when checked at", state.Tooltip);
     }
+
+    [Theory]
+    [InlineData(2, 180_000)]
+    [InlineData(5, 0)]
+    [InlineData(7, -120_000)]
+    public void Sla_sort_time_crosses_zero_at_a_continuous_deadline(int minutesElapsed, double expected)
+    {
+        var observed = new DateTimeOffset(2026, 11, 19, 12, 0, 0, TimeSpan.Zero);
+        var sla = new JiraSla("Time to Resolution", false, false, false, 600_000, 300_000)
+        {
+            ObservedAt = observed,
+            BreachAt = observed.AddMinutes(5),
+        };
+
+        Assert.Equal(expected, sla.RemainingForSort(observed.AddMinutes(minutesElapsed)));
+    }
+
+    [Theory]
+    [InlineData(true, 5, false, 300_000L, 300_000d)]
+    [InlineData(false, 65, false, 300_000L, 300_000d)]
+    [InlineData(false, 5, true, 300_000L, null)]
+    [InlineData(false, 5, false, null, null)]
+    public void Sla_sort_time_uses_only_available_active_sla_time(bool paused, int minutesUntilBreach,
+        bool completed, long? snapshot, double? expected)
+    {
+        var observed = new DateTimeOffset(2026, 11, 19, 12, 0, 0, TimeSpan.Zero);
+        var sla = new JiraSla("Time to Resolution", completed, false, paused, 600_000, snapshot)
+        {
+            ObservedAt = observed,
+            BreachAt = observed.AddMinutes(minutesUntilBreach),
+        };
+
+        Assert.Equal(expected, sla.RemainingForSort(observed.AddMinutes(7)));
+    }
 }
