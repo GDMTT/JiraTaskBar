@@ -274,10 +274,11 @@ public sealed class AppController : IDisposable
         }
     }
 
-    public async Task<IReadOnlyList<JiraIssue>> FetchIssuesAsync()
+    public async Task<(IReadOnlyList<JiraIssue> Issues, string? Warning)> FetchIssuesAsync()
     {
         var client = Client ?? throw new InvalidOperationException("Not connected to Jira.");
-        _priorities ??= await client.GetPrioritiesAsync();
+        var settings = Settings;
+        var priorities = _priorities ??= await client.GetPrioritiesAsync();
         try
         {
             _durationSettings ??= await client.GetTimeTrackingConfigurationAsync();
@@ -288,7 +289,20 @@ public sealed class AppController : IDisposable
             // Duration metadata is optional. Keep it uncached so a later refresh can retry.
             Log.Error("Could not load Jira duration settings; using default duration units", ex);
         }
-        return await client.SearchAsync(Settings.Jql, _priorities);
+        var issues = await client.SearchAsync(settings.Jql, priorities);
+        var additionalKeys = (settings.AdditionalTicketKeys ?? []).Where(key => !string.IsNullOrWhiteSpace(key))
+            .Except(issues.Select(issue => issue.Key), StringComparer.OrdinalIgnoreCase).ToArray();
+        if (additionalKeys.Length == 0) return (issues, null);
+
+        var (additionalIssues, failed) = await client.FetchIssuesByKeyAsync(additionalKeys, priorities);
+        var allIssues = IssueOrdering.Sort(issues.Concat(additionalIssues).DistinctBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase));
+        var warning = failed switch
+        {
+            0 => null,
+            1 => "Could not load one added ticket. Check its key and your Jira access.",
+            _ => $"Could not load {failed} added tickets. Check their keys and your Jira access.",
+        };
+        return (allIssues, warning);
     }
 
     public void ToggleTimer(string key) => Tracker.Toggle(key);

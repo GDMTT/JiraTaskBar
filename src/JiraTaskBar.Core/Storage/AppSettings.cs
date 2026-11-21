@@ -30,6 +30,7 @@ public sealed class AppSettings
     public string? Email { get; set; }
 
     public string Jql { get; set; } = DefaultJql;
+    public string[] AdditionalTicketKeys { get; set; } = [];
     public int RefreshMinutes { get; set; } = 5;
     public ShortSessionMode ShortSessions { get; set; } = ShortSessionMode.RoundUpToMinute;
     /// <summary>Prompt to exclude time away (lock/sleep) when the gap is at least this long. 0 disables.</summary>

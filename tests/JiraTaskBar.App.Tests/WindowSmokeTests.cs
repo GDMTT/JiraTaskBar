@@ -195,7 +195,7 @@ public class WindowSmokeTests
             bar.Close();
             Assert.True(bar.IsVisible);
 
-            var settings = new SettingsWindow(new AppSettings(),
+            var settings = new SettingsWindow(new AppSettings { AdditionalTicketKeys = ["TEST-1", "TEST-2"] },
                 new StoredCredentials("https://example.atlassian.net/", "a@b.c", "t"), firstRun: false,
                 message: "Jira rejected the saved API token.");
             settings.Show();
@@ -207,14 +207,43 @@ public class WindowSmokeTests
             foreach (var name in new[] { "SiteBox", "EmailBox", "TokenBox", "CloudIdBox", "JqlBox", "RefreshBox",
                          "ShortSessionBox", "WorkStartBox", "WorkEndBox", "OnlyWorkdaysBox", "OnlyWorkHoursBox", "WorklogColorsBox", "StartupSwitch" })
                 Assert.IsType<string>(((FrameworkElement)settings.FindName(name)).ToolTip);
+            var tabs = (TabControl)settings.FindName("SettingsTabs");
+            Assert.Equal(8, tabs.Items.Count);
+            Assert.Same(settings.FindName("JiraTab"), tabs.SelectedItem);
+            var additionalTickets = (TextBox)settings.FindName("AdditionalTicketsBox");
+            Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
+            additionalTickets.Text = "not-a-ticket";
+            typeof(SettingsWindow).GetMethod("Save_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(settings, [settings, new RoutedEventArgs()]);
+            Assert.Same(settings.FindName("AddTicketsTab"), tabs.SelectedItem);
+            Assert.Contains("Enter a Jira ticket key", ((Wpf.Ui.Controls.InfoBar)settings.FindName("Status")).Message);
             settings.Close();
 
+            AssertAddedTicketsJoinTheQueue(controller, issue);
             typeof(AppController).GetProperty(nameof(AppController.IsExiting))!.SetValue(controller, true);
             bar.Close();
             controller.Dispose();
             AssertCalendarClickEditsSavedWorklog(issue);
             app.Shutdown();
         });
+    }
+
+    private static void AssertAddedTicketsJoinTheQueue(AppController controller, JiraIssue issue)
+    {
+        var manualIssue = issue with { Key = "TEST-2", Priority = new JiraPriority("1", "Highest", 0) };
+        var client = new NullJiraClient { QueueIssues = [issue], AddedIssues = [manualIssue], FailedAddedIssueCount = 1 };
+        var clientProperty = typeof(AppController).GetProperty(nameof(AppController.Client))!;
+        var original = controller.Client;
+        clientProperty.SetValue(controller, client);
+        controller.Settings.AdditionalTicketKeys = [issue.Key.ToLowerInvariant(), manualIssue.Key, "TEST-999"];
+        try
+        {
+            var (issues, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([manualIssue.Key, "TEST-999"], client.RequestedAddedKeys);
+            Assert.Equal([manualIssue.Key, issue.Key], issues.Select(ticket => ticket.Key));
+            Assert.Contains("one added ticket", warning);
+        }
+        finally { clientProperty.SetValue(controller, original); }
     }
 
     private static void AssertSyncedOvernightWorklogKeepsItsDaySegment(JiraIssue issue)
@@ -679,6 +708,10 @@ public class WindowSmokeTests
 
     private sealed class NullJiraClient : IJiraClient
     {
+        public IReadOnlyList<JiraIssue> QueueIssues { get; init; } = [];
+        public IReadOnlyList<JiraIssue> AddedIssues { get; init; } = [];
+        public IReadOnlyList<string> RequestedAddedKeys { get; private set; } = [];
+        public int FailedAddedIssueCount { get; init; }
         public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }
         public IReadOnlyList<JiraIssue> Discovered { get; set; } = [];
         public bool FailDiscovery { get; set; }
@@ -695,8 +728,13 @@ public class WindowSmokeTests
         }
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
             Task.FromResult(JiraDurationSettings.Default);
-        public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<JiraPriority>>([]);
+        public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => Task.FromResult(QueueIssues);
+        public Task<(IReadOnlyList<JiraIssue> Issues, int FailedCount)> FetchIssuesByKeyAsync(IReadOnlyList<string> keys, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default)
+        {
+            RequestedAddedKeys = keys;
+            return Task.FromResult((AddedIssues, FailedAddedIssueCount));
+        }
         public Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default) => Task.FromResult<JiraSla?>(null);
         public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) =>
             Worklogs is null ? throw new NotSupportedException()

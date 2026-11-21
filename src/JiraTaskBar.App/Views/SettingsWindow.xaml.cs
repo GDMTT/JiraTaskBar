@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Windows;
 using CheckBox = System.Windows.Controls.CheckBox;
 using JiraTaskBar.App.Services;
@@ -34,6 +35,7 @@ public partial class SettingsWindow : FluentWindow
         (saved is { CloudId: null } ? ClassicRadio : ScopedRadio).IsChecked = true;
 
         JqlBox.Text = current.Jql;
+        AdditionalTicketsBox.Text = string.Join(Environment.NewLine, current.AdditionalTicketKeys ?? []);
         RefreshBox.Value = current.RefreshMinutes;
         IdleBox.Value = current.IdlePromptMinutes;
         ShortSessionBox.SelectedIndex = current.ShortSessions == ShortSessionMode.RoundUpToMinute ? 0 : 1;
@@ -111,29 +113,51 @@ public partial class SettingsWindow : FluentWindow
     private void CreateToken_Click(object sender, RoutedEventArgs e) =>
         Shell.OpenUrl("https://id.atlassian.com/manage-profile/security/api-tokens");
 
-    private async void Test_Click(object sender, RoutedEventArgs e) => await TestAsync();
+    private async void Test_Click(object sender, RoutedEventArgs e)
+    {
+        if (await TestAsync() == TestOutcome.Invalid) SettingsTabs.SelectedItem = JiraTab;
+    }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        var additionalKeys = AdditionalTicketsBox.Text.Split(['\r', '\n', ',', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(key => key.ToUpperInvariant()).Distinct(StringComparer.Ordinal).ToArray();
+        if (additionalKeys.FirstOrDefault(key => !TicketKeyPattern().IsMatch(key)) is { } invalidKey)
+        {
+            SettingsTabs.SelectedItem = AddTicketsTab;
+            ShowStatus(InfoBarSeverity.Error, $"Enter a Jira ticket key like ABC-123. Check the entry {invalidKey}.");
+            return;
+        }
         var workdays = WorkdaysPanel.Children.OfType<CheckBox>().Where(box => box.IsChecked == true)
             .Select(box => (DayOfWeek)box.Tag).ToArray();
         if (workdays.Length == 0)
         {
+            SettingsTabs.SelectedItem = WorkWeekTab;
             ShowStatus(InfoBarSeverity.Error, "Choose at least one working day.");
             return;
         }
         if (!TryReadWorkTime(WorkStartBox.Text, out var start) || !TryReadWorkTime(WorkEndBox.Text, out var end) ||
             !WorklogCalendarHours.IsValid(start, end))
         {
+            SettingsTabs.SelectedItem = WorkWeekTab;
             ShowStatus(InfoBarSeverity.Error, "Enter working hours as HH:mm with the end after the start. Use 24:00 for midnight at the end of the day.");
             return;
         }
-        if (!TryReadWorklogColors(out var worklogColors)) return;
+        if (!TryReadWorklogColors(out var worklogColors))
+        {
+            SettingsTabs.SelectedItem = CalendarTab;
+            return;
+        }
         var outcome = await TestAsync();
         // Allow saving while offline, but not with credentials Jira has rejected.
-        if (outcome == TestOutcome.Invalid) return;
+        if (outcome == TestOutcome.Invalid)
+        {
+            SettingsTabs.SelectedItem = JiraTab;
+            return;
+        }
         if (IsScoped && _testedCloudId is null)
         {
+            SettingsTabs.SelectedItem = JiraTab;
             ShowStatus(InfoBarSeverity.Error, "A scoped token needs the site's cloud ID – paste it from admin.atlassian.com.");
             return;
         }
@@ -144,6 +168,7 @@ public partial class SettingsWindow : FluentWindow
         Result = new AppSettings
         {
             Jql = string.IsNullOrWhiteSpace(JqlBox.Text) ? AppSettings.DefaultJql : JqlBox.Text.Trim(),
+            AdditionalTicketKeys = additionalKeys,
             RefreshMinutes = (int)Math.Clamp(RefreshBox.Value ?? 5, 1, 120),
             IdlePromptMinutes = (int)Math.Clamp(IdleBox.Value ?? 10, 0, 480),
             ShortSessions = ShortSessionBox.SelectedIndex == 0 ? ShortSessionMode.RoundUpToMinute : ShortSessionMode.Skip,
@@ -170,6 +195,9 @@ public partial class SettingsWindow : FluentWindow
     }
 
     private static string FormatWorkTime(int minute) => FormattableString.Invariant($"{minute / 60:00}:{minute % 60:00}");
+
+    [GeneratedRegex(@"\A[A-Z][A-Z0-9_]*-[0-9]+\z", RegexOptions.CultureInvariant)]
+    private static partial Regex TicketKeyPattern();
 
     private static bool TryReadWorkTime(string text, out int minute)
     {

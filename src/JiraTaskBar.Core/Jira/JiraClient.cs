@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace JiraTaskBar.Core.Jira;
@@ -11,6 +12,8 @@ public interface IJiraClient
     Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
+    Task<(IReadOnlyList<JiraIssue> Issues, int FailedCount)> FetchIssuesByKeyAsync(IReadOnlyList<string> keys,
+        IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until, CancellationToken ct = default);
     Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
@@ -135,6 +138,33 @@ public sealed class JiraClient : IJiraClient
 
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
         SearchIssuesAsync(jql, priorities, MaxIssues, ct);
+
+    public async Task<(IReadOnlyList<JiraIssue> Issues, int FailedCount)> FetchIssuesByKeyAsync(IReadOnlyList<string> keys,
+        IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default)
+    {
+        var byId = priorities.ToDictionary(priority => priority.Id);
+        var issues = new List<JiraIssue>();
+        var failed = 0;
+        foreach (var batch in keys.Distinct(StringComparer.OrdinalIgnoreCase).Chunk(100))
+        {
+            var request = JsonSerializer.SerializeToNode(new { issueIdsOrKeys = batch, fields = SearchFields.Split(',') });
+            try
+            {
+                var response = await SendAsync(HttpMethod.Post, "rest/api/3/issue/bulkfetch", request, ct);
+                var batchIssues = JiraPayloads.ParseSearch(response, byId).Issues
+                    .Where(issue => !string.IsNullOrWhiteSpace(issue.Key)).ToArray();
+                issues.AddRange(batchIssues);
+                failed += (response?["issueErrors"] as JsonArray)?.Count ?? Math.Max(0, batch.Length - batchIssues.Length);
+            }
+            catch (Exception ex) when (ex is JiraApiException { StatusCode: not 401 } or HttpRequestException or JsonException ||
+                                       ex is OperationCanceledException && !ct.IsCancellationRequested)
+            {
+                // The regular queue and successful batches remain usable while these keys are retried on refresh.
+                failed += batch.Length;
+            }
+        }
+        return (issues, failed);
+    }
 
     public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until,
         CancellationToken ct = default)

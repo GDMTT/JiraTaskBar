@@ -80,6 +80,29 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Added_ticket_lookup_returns_available_issues_with_a_partial_failure_count()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"issues":[{"key":"ABC-2","fields":{"summary":"Outside the queue","priority":{"id":"4"}}}],
+             "issueErrors":[{"issueIdOrKey":"ABC-999","status":404,"errorMessages":["Issue not found"]}]}
+            """);
+
+        var (issues, failed) = await client.FetchIssuesByKeyAsync(["ABC-2", "abc-2", "ABC-999"],
+            [new JiraPriority("4", "Medium", 2)]);
+
+        var issue = Assert.Single(issues);
+        Assert.Equal("ABC-2", issue.Key);
+        Assert.Equal(2, issue.PriorityRank);
+        Assert.Equal(1, failed);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/rest/api/3/issue/bulkfetch", request.PathAndQuery);
+        var body = JsonNode.Parse(request.Body!)!;
+        Assert.Equal(["ABC-2", "ABC-999"], body["issueIdsOrKeys"]!.AsArray().Select(key => key!.GetValue<string>()));
+    }
+
+    [Fact]
     public async Task Worklog_issue_search_includes_older_starts_and_reads_past_the_queue_limit()
     {
         var (client, handler) = Create();
