@@ -738,7 +738,7 @@ public sealed class AppController : IDisposable
     {
         if (!ReferenceEquals(source, Client)) return "The Jira connection changed. Open Browse queues again.";
         var site = source.Connection.SiteUrl.AbsoluteUri;
-        var saved = Settings.AdditionalTicketKeysBySite ??= new(StringComparer.OrdinalIgnoreCase);
+        var saved = Settings.AdditionalTicketKeysBySite ??= new(StringComparer.Ordinal);
         var original = saved.GetValueOrDefault(site);
         var useCache = ReferenceEquals(source, _additionalTicketClient);
         var pins = (original ?? []).Select(key => useCache ? _additionalTicketCache.GetValueOrDefault(key)?.Key ?? key : key)
@@ -930,7 +930,12 @@ public sealed class AppController : IDisposable
         switch (await box.ShowDialogAsync())
         {
             case MessageBoxResult.Primary:
-                await Worklogs.RetryPendingAsync();
+                var client = Client;
+                try { await Worklogs.RetryPendingAsync(); }
+                catch (JiraApiException ex) when (ex.StatusCode == 401 && client is not null)
+                {
+                    Bar.ReportJiraSignInFailure(client, ex);
+                }
                 break;
             case MessageBoxResult.Secondary:
                 foreach (var p in pending) Worklogs.Discard(p.Id);

@@ -115,9 +115,7 @@ public sealed partial class BarViewModel : ObservableObject
         }
         catch (JiraApiException ex) when (ex.StatusCode == 401)
         {
-            if (!ReferenceEquals(_app.Client, client)) return;
-            StatusMessage = client.Connection.IsDataCenter ? ex.Message : "Jira sign-in expired – update your API token in Settings";
-            _app.ReportAuthFailure();
+            ReportJiraSignInFailure(client, ex);
         }
         catch (Exception ex)
         {
@@ -131,9 +129,16 @@ public sealed partial class BarViewModel : ObservableObject
             if (_refreshRequested)
             {
                 _refreshRequested = false;
-                _ = RefreshAsync();
+                if (!_app.IsAuthFailed) _ = RefreshAsync();
             }
         }
+    }
+
+    internal void ReportJiraSignInFailure(IJiraClient client, JiraApiException error)
+    {
+        if (!ReferenceEquals(_app.Client, client)) return;
+        StatusMessage = client.Connection.IsDataCenter ? error.Message : "Jira sign-in expired – update your API token in Settings";
+        _app.ReportAuthFailure();
     }
 
     private async Task LoadSlasAsync(IJiraClient client, IReadOnlyList<JiraIssue> issues)

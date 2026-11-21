@@ -113,6 +113,7 @@ public sealed class WorklogService
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _queue.Replace(item with { LastError = ex.Message, Attempts = item.Attempts + 1 });
+                    if (ex is JiraApiException { StatusCode: 401 }) throw;
                 }
             }
         }

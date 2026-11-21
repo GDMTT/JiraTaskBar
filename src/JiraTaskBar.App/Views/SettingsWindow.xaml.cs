@@ -17,7 +17,7 @@ namespace JiraTaskBar.App.Views;
 public partial class SettingsWindow : FluentWindow
 {
     private readonly StoredCredentials? _saved;
-    private readonly Dictionary<string, string> _additionalTicketDrafts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _additionalTicketDrafts = new(StringComparer.Ordinal);
     private string? _additionalTicketSite;
     private bool _ticketDraftsLoaded;
     /// <summary>The cloud ID confirmed by the last successful test (scoped tokens only).</summary>
@@ -137,8 +137,8 @@ public partial class SettingsWindow : FluentWindow
         if (!_ticketDraftsLoaded) return;
         var previous = _additionalTicketSite;
         UpdateAdditionalTicketSite();
-        if (!string.Equals(previous, _additionalTicketSite, StringComparison.OrdinalIgnoreCase))
-            CloudIdBox.Text = string.Equals(_additionalTicketSite, _saved?.SiteUrl, StringComparison.OrdinalIgnoreCase)
+        if (!string.Equals(previous, _additionalTicketSite, StringComparison.Ordinal))
+            CloudIdBox.Text = string.Equals(_additionalTicketSite, _saved?.SiteUrl, StringComparison.Ordinal)
                 ? _saved?.CloudId ?? string.Empty : string.Empty;
     }
 
@@ -147,7 +147,7 @@ public partial class SettingsWindow : FluentWindow
         string? site;
         try { site = ReadSite().AbsoluteUri; }
         catch (ArgumentException) { site = null; }
-        if (!_ticketDraftsLoaded || string.Equals(_additionalTicketSite, site, StringComparison.OrdinalIgnoreCase)) return;
+        if (!_ticketDraftsLoaded || string.Equals(_additionalTicketSite, site, StringComparison.Ordinal)) return;
 
         if (_additionalTicketSite is { } previous) _additionalTicketDrafts[previous] = AdditionalTicketsBox.Text;
         _additionalTicketSite = site;
@@ -257,7 +257,7 @@ public partial class SettingsWindow : FluentWindow
         var site = ReadSite();
         Credentials = new StoredCredentials(site.ToString(), EmailBox.Text.Trim(), ResolveToken(site)!,
             IsScoped ? _testedCloudId : null, IsDataCenter);
-        var siteKeys = new Dictionary<string, string[]>(Result.AdditionalTicketKeysBySite ?? [], StringComparer.OrdinalIgnoreCase);
+        var siteKeys = new Dictionary<string, string[]>(Result.AdditionalTicketKeysBySite ?? [], StringComparer.Ordinal);
         if (additionalKeys.Length == 0) siteKeys.Remove(site.AbsoluteUri);
         else siteKeys[site.AbsoluteUri] = additionalKeys;
         Result = new AppSettings

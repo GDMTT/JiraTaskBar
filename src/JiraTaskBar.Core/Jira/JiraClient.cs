@@ -520,7 +520,14 @@ public sealed class JiraClient : IJiraClient
 
         if (status is >= 300 and < 400)
             throw new JiraApiException("Jira redirected the request. Check the Data Center base URL and whether REST Basic sign-in is enabled.", 401);
+
+        if (response.IsSuccessStatusCode && string.Equals(response.Content.Headers.ContentType?.MediaType,
+            "text/html", StringComparison.OrdinalIgnoreCase))
+            throw UnexpectedDataCenterSignInPage();
     }
+
+    private static JiraApiException UnexpectedDataCenterSignInPage() => new(
+        "Jira returned a web page for a REST request. Check the Data Center base URL and whether REST Basic sign-in is enabled.", 401);
 
     /// <summary>Honours Retry-After (seconds or date), otherwise exponential back-off: 2s, 4s, 8s.</summary>
     private static TimeSpan RetryDelay(HttpResponseMessage response, int attempt)
@@ -546,6 +553,8 @@ public sealed class JiraClient : IJiraClient
             throw new JiraApiException(message, status);
         }
         var text = await response.Content.ReadAsStringAsync(ct);
+        if (Connection.IsDataCenter && text.AsSpan().TrimStart().StartsWith("<", StringComparison.Ordinal))
+            throw UnexpectedDataCenterSignInPage();
         JsonNode? node = null;
         if (!string.IsNullOrWhiteSpace(text))
         {

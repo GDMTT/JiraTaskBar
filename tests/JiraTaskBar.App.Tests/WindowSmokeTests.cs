@@ -217,9 +217,13 @@ public class WindowSmokeTests
             Assert.Same(settings.FindName("AddTicketsTab"), tabs.SelectedItem);
             Assert.Contains("Enter a Jira ticket key", ((Wpf.Ui.Controls.InfoBar)settings.FindName("Status")).Message);
             settings.Close();
-            var dataCenterSettings = new SettingsWindow(new AppSettings(),
-                new StoredCredentials("https://jira.example.org/jira/", "agent", "example-password", IsDataCenter: true),
-                firstRun: false);
+            const string dataCenterSite = "https://jira.example.org/jira/";
+            const string alternateContext = "https://jira.example.org/Jira/";
+            var siteSettings = new AppSettings();
+            siteSettings.AdditionalTicketKeysBySite[dataCenterSite] = ["LOWER-1"];
+            siteSettings.AdditionalTicketKeysBySite[alternateContext] = ["UPPER-1"];
+            var dataCenterSettings = new SettingsWindow(siteSettings,
+                new StoredCredentials(dataCenterSite, "agent", "example-password", IsDataCenter: true), firstRun: false);
             try
             {
                 var authentication = (ComboBox)dataCenterSettings.FindName("AuthenticationBox");
@@ -229,6 +233,14 @@ public class WindowSmokeTests
                 Assert.Empty(secret.Password);
                 Assert.Equal(Visibility.Collapsed, ((FrameworkElement)dataCenterSettings.FindName("TokenTypePanel")).Visibility);
                 Assert.Equal(Visibility.Visible, ((FrameworkElement)dataCenterSettings.FindName("ForgetSignInButton")).Visibility);
+                var site = (TextBox)dataCenterSettings.FindName("SiteBox");
+                var pins = (TextBox)dataCenterSettings.FindName("AdditionalTicketsBox");
+                Assert.Equal("LOWER-1", pins.Text);
+                pins.Text = "LOWER-2";
+                site.Text = alternateContext;
+                Assert.Equal("UPPER-1", pins.Text);
+                site.Text = dataCenterSite;
+                Assert.Equal("LOWER-2", pins.Text);
                 secret.Password = "temporary-example";
                 authentication.SelectedIndex = 0;
                 Assert.False(dataCenterSettings.IsDataCenter);

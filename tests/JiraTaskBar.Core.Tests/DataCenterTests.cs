@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using JiraTaskBar.Core.Jira;
 using JiraTaskBar.Core.Storage;
+using JiraTaskBar.Core.Tracking;
 
 namespace JiraTaskBar.Core.Tests;
 
@@ -120,6 +121,47 @@ public class DataCenterTests
         Assert.Equal(401, error.StatusCode);
         Assert.Contains("CAPTCHA", error.Message);
         Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task PendingBatchStopsOnSignInFailureAndKeepsUnsentWorklogs()
+    {
+        using var directory = new TempDir();
+        var handler = new FakeHandler().Respond("{}").Respond("{}", HttpStatusCode.Unauthorized).Respond("{}").Respond("{}");
+        var client = Create(handler);
+        var store = new JsonFileStore<List<PendingWorklog>>(directory.File("queue.json"));
+        var queue = new WorklogQueue(store);
+        foreach (var key in new[] { "IT-1", "IT-2", "IT-3" })
+            queue.Enqueue(new PendingWorklog(Guid.NewGuid(), key, DateTimeOffset.UnixEpoch, 60, null, 0));
+        var service = new WorklogService(() => client, queue, () => ShortSessionMode.Skip);
+
+        var error = await Assert.ThrowsAsync<JiraApiException>(() => service.RetryPendingAsync());
+        Assert.Equal(401, error.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Collection(new WorklogQueue(store).Snapshot(),
+            item => { Assert.Equal("IT-2", item.Key); Assert.Equal(1, item.Attempts); },
+            item => { Assert.Equal("IT-3", item.Key); Assert.Equal(0, item.Attempts); });
+
+        Assert.Equal(0, await service.RetryPendingAsync());
+        Assert.Equal(4, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData("text/html")]
+    [InlineData("application/json")]
+    public async Task DataCenterLoginPageKeepsTheWorklogPending(string contentType)
+    {
+        using var directory = new TempDir();
+        var handler = new FakeHandler().RespondBytes("<html><title>Sign in</title></html>"u8.ToArray(), contentType);
+        var store = new JsonFileStore<List<PendingWorklog>>(directory.File("queue.json"));
+        var client = Create(handler);
+        var service = new WorklogService(() => client, new WorklogQueue(store), () => ShortSessionMode.Skip);
+        var start = DateTimeOffset.UnixEpoch;
+
+        var result = await service.LogAsync(new CompletedSession("IT-1", start, start.AddMinutes(1)));
+        Assert.Equal(WorklogOutcome.Queued, result.Outcome);
+        Assert.True(result.IsAuthFailure);
+        Assert.Equal("IT-1", Assert.Single(new WorklogQueue(store).Snapshot()).Key);
     }
 
     [Fact]
