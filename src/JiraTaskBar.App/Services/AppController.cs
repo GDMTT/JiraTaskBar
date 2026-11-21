@@ -43,6 +43,7 @@ public sealed class AppController : IDisposable
     private BarWindow? _bar;
     private ContextReportWindow? _contextReportWindow;
     private AboutWindow? _aboutWindow;
+    private QueueBrowserWindow? _queueBrowser;
     private DateTimeOffset _lastHeartbeat;
     private DateTimeOffset? _awaySinceUtc;
     private bool _awayPromptOpen;
@@ -148,6 +149,7 @@ public sealed class AppController : IDisposable
         // and disposing that client so reopening always uses the current connection.
         _worklogWindow?.Close();
         _worklogWindow = null;
+        _queueBrowser?.Close();
         _http?.Dispose();
         _http = null;
         Client = null;
@@ -609,6 +611,7 @@ public sealed class AppController : IDisposable
     {
         menu.Items.Clear();
         menu.Items.Add(Item("Refresh tickets", SymbolRegular.ArrowSync24, async () => await Bar.RefreshAsync()));
+        menu.Items.Add(Item("Browse queues…", null, OpenQueueBrowser));
 
         if (Tracker.Active is { } active)
             menu.Items.Add(Item($"Stop timer ({active.Key})", SymbolRegular.Stop24, () => Tracker.Stop()));
@@ -702,6 +705,59 @@ public sealed class AppController : IDisposable
     }
 
     private void OpenSettings() => OpenSettings(message: null);
+
+    private void OpenQueueBrowser()
+    {
+        if (Client is not { } client)
+        {
+            OpenSettings();
+            return;
+        }
+        if (_queueBrowser is not null)
+        {
+            _queueBrowser.Activate();
+            return;
+        }
+        _queueBrowser = new QueueBrowserWindow(client, Settings.Jql, (issue, direction) => EditBrowserPin(client, issue, direction));
+        _queueBrowser.Closed += (_, _) => _queueBrowser = null;
+        _queueBrowser.Show();
+    }
+
+    internal bool CanDropBrowserTicket(string key) => _queueBrowser?.DraggedTicket is { } issue &&
+        string.Equals(issue.Key, key, StringComparison.OrdinalIgnoreCase) && ReferenceEquals(Client, _queueBrowser.Client);
+
+    internal void DropBrowserTicket(string key, string? anchor, bool after)
+    {
+        if (!CanDropBrowserTicket(key) || _queueBrowser is not { DraggedTicket: { } issue } browser) return;
+        browser.ReportPinStatus(EditBrowserPin(browser.Client, issue, direction: 0, moveExisting: true, anchor, after));
+    }
+
+    private string EditBrowserPin(IJiraClient source, JiraIssue issue, int direction, bool moveExisting = false,
+        string? anchor = null, bool after = false)
+    {
+        if (!ReferenceEquals(source, Client)) return "The Jira connection changed. Open Browse queues again.";
+        var site = source.Connection.SiteUrl.AbsoluteUri;
+        var saved = Settings.AdditionalTicketKeysBySite ??= new(StringComparer.OrdinalIgnoreCase);
+        var original = saved.GetValueOrDefault(site);
+        var useCache = ReferenceEquals(source, _additionalTicketClient);
+        var pins = (original ?? []).Select(key => useCache ? _additionalTicketCache.GetValueOrDefault(key)?.Key ?? key : key)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var wasPinned = pins.Contains(issue.Key, StringComparer.OrdinalIgnoreCase);
+        var changed = direction == 0 ? TicketPinOrder.Place(pins, issue.Key, anchor, after, moveExisting)
+            : TicketPinOrder.Move(pins, issue.Key, direction);
+        if (!changed) return direction == 0 ? $"{issue.Key} is already pinned."
+            : $"{issue.Key} has no pinned ticket in that direction.";
+
+        saved[site] = pins.ToArray();
+        if (!SaveSettings())
+        {
+            if (original is null) saved.Remove(site);
+            else saved[site] = original;
+            return "Could not save the pinned ticket order.";
+        }
+        Bar.RequestRefresh();
+        return wasPinned ? $"Moved {issue.Key} in the pinned list." : $"Pinned {issue.Key}.";
+    }
 
     private void OpenAbout()
     {
@@ -816,15 +872,17 @@ public sealed class AppController : IDisposable
         }
     }
 
-    private void SaveSettings()
+    private bool SaveSettings()
     {
         try
         {
             _settingsStore.Save(Settings);
+            return true;
         }
         catch (Exception ex)
         {
             Log.Error("Could not save settings", ex);
+            return false;
         }
     }
 

@@ -15,6 +15,7 @@
         Foreground="{DynamicResource TextFillColorPrimaryBrush}"
         BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
         BorderThickness="1"
+        AllowDrop="True" DragOver="BrowserTicket_DragOver" Drop="BrowserTicket_Drop"
         UseLayoutRounding="True">
 
     <Window.Resources>
@@ -173,7 +174,7 @@
                           HorizontalScrollBarVisibility="Disabled"
                           PanningMode="Both"
                           PreviewMouseWheel="Scroller_PreviewMouseWheel">
-                <ItemsControl ItemsSource="{Binding Tickets}" ItemTemplate="{StaticResource TicketTemplate}">
+                <ItemsControl x:Name="TicketItems" ItemsSource="{Binding Tickets}" ItemTemplate="{StaticResource TicketTemplate}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <StackPanel Orientation="{Binding DataContext.Orientation, RelativeSource={RelativeSource AncestorType=Window}}" />

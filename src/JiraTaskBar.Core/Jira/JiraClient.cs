@@ -12,6 +12,9 @@ public interface IJiraClient
     Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
+    Task<IReadOnlyList<JiraIssue>> BrowseIssuesAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
+        SearchAsync(jql, priorities, ct);
+    Task<IReadOnlyList<JiraQueue>> GetQueuesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<JiraQueue>>([]);
     Task<IReadOnlyList<JiraIssueLookup>> FetchIssuesByKeyAsync(IReadOnlyList<string> keys,
         IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until, CancellationToken ct = default);
@@ -138,6 +141,52 @@ public sealed class JiraClient : IJiraClient
 
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
         SearchIssuesAsync(jql, priorities, MaxIssues, ct);
+
+    public Task<IReadOnlyList<JiraIssue>> BrowseIssuesAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
+        SearchIssuesAsync(jql, priorities, null, ct);
+
+    public async Task<IReadOnlyList<JiraQueue>> GetQueuesAsync(CancellationToken ct = default)
+    {
+        const string path = "rest/servicedeskapi/servicedesk";
+        var desks = await ReadServiceDeskPagesAsync(path, ct);
+        var queues = new List<JiraQueue>();
+        foreach (var desk in desks)
+        {
+            var id = desk["id"]?.GetValue<string>();
+            var project = desk["projectKey"]?.GetValue<string>() ?? desk["projectName"]?.GetValue<string>();
+            if (!IsNumericId(id) || string.IsNullOrWhiteSpace(project)) continue;
+            try
+            {
+                foreach (var queue in await ReadServiceDeskPagesAsync($"{path}/{id}/queue", ct))
+                {
+                    var name = queue["name"]?.GetValue<string>();
+                    var jql = queue["jql"]?.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(jql)) queues.Add(new(project, name, jql));
+                }
+            }
+            catch (JiraApiException ex) when (ex.StatusCode is 403 or 404)
+            {
+                // A service project can be visible to customers who have no queue access.
+            }
+        }
+        return queues.OrderBy(queue => queue.Project, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(queue => queue.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+    }
+
+    private async Task<IReadOnlyList<JsonObject>> ReadServiceDeskPagesAsync(string path, CancellationToken ct)
+    {
+        var result = new List<JsonObject>();
+        for (var start = 0; ;)
+        {
+            var response = await SendAsync(HttpMethod.Get, $"{path}?start={start}&limit=50", null, ct);
+            if (response?["values"] is not JsonArray { Count: > 0 } values) return result;
+            result.AddRange(values.OfType<JsonObject>());
+            if (response["isLastPage"]?.GetValue<bool>() != false) return result;
+            var pageStart = response["start"]?.GetValue<int>() ?? start;
+            if (pageStart != start) throw new InvalidOperationException("Jira returned an unexpected queue page offset.");
+            start = checked(start + values.Count);
+        }
+    }
 
     public async Task<IReadOnlyList<JiraIssueLookup>> FetchIssuesByKeyAsync(IReadOnlyList<string> keys,
         IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default)
