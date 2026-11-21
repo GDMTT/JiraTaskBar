@@ -98,6 +98,10 @@
             <ComboBox x:Name="CalendarResolutionBox" Margin="0,4,0,10"
                       ToolTip="Day and Week calendar rows, selections, and edits snap to this interval." />
 
+            <TextBlock Text="First day of the calendar week" FontWeight="SemiBold" />
+            <ComboBox x:Name="CalendarFirstDayBox" Margin="0,4,0,10"
+                      ToolTip="Sets the first day shown in the weekly calendar and used for weekly totals." />
+
             <TextBlock Text="Daily worklog target in minutes (optional)" FontWeight="SemiBold" />
             <ui:NumberBox x:Name="DailyTargetBox" Margin="0,4,0,10" Minimum="0" Maximum="1440"
                           SmallChange="15" MaxDecimalPlaces="0" ToolTip="Leave empty or enter zero to turn off the target." />

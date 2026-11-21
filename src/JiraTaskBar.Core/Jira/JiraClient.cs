@@ -11,6 +11,7 @@ public interface IJiraClient
     Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
+    Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until, CancellationToken ct = default);
     Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
     Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
@@ -132,10 +133,23 @@ public sealed class JiraClient : IJiraClient
         }
     }
 
-    public async Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default)
+    public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
+        SearchIssuesAsync(jql, priorities, MaxIssues, ct);
+
+    public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until,
+        CancellationToken ct = default)
+    {
+        var author = accountId.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        var jql = FormattableString.Invariant($"worklogAuthor = \"{author}\" AND worklogDate >= \"{from:yyyy-MM-dd}\" AND worklogDate < \"{until:yyyy-MM-dd}\"");
+        return SearchIssuesAsync(jql, [], null, ct);
+    }
+
+    private async Task<IReadOnlyList<JiraIssue>> SearchIssuesAsync(string jql, IReadOnlyList<JiraPriority> priorities,
+        int? maxIssues, CancellationToken ct)
     {
         var byId = priorities.ToDictionary(p => p.Id);
         var all = new List<JiraIssue>();
+        var seenTokens = new HashSet<string>(StringComparer.Ordinal);
         string? token = null;
         do
         {
@@ -146,7 +160,9 @@ public sealed class JiraClient : IJiraClient
             var (issues, next) = JiraPayloads.ParseSearch(node, byId);
             all.AddRange(issues);
             token = next;
-        } while (token is not null && all.Count < MaxIssues);
+            if (token is not null && !seenTokens.Add(token))
+                throw new InvalidOperationException("Jira returned a repeated issue search page token.");
+        } while (token is not null && (maxIssues is null || all.Count < maxIssues));
 
         return IssueOrdering.Sort(all);
     }

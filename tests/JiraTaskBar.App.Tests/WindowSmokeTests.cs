@@ -171,6 +171,7 @@ public class WindowSmokeTests
             }
             AssertCalendarWorklogsStayInDayColumns(issue);
             AssertSyncedOvernightWorklogKeepsItsDaySegment(issue);
+            AssertWeeklyTotalsUseDiscoveredWorklogsAndConfiguredStart(issue);
 
             var addWorklog = new AddWorklogWindow([issue], issue, DateTimeOffset.Now,
                 TimeSpan.FromMinutes(30), new NullJiraClient());
@@ -234,10 +235,57 @@ public class WindowSmokeTests
         finally { calendar.Close(); }
     }
 
+    private static void AssertWeeklyTotalsUseDiscoveredWorklogsAndConfiguredStart(JiraIssue selected)
+    {
+        const string outsideQueue = "OTHER-42";
+        const string accountId = "test-account";
+        var sunday = new DateOnly(2026, 11, 15);
+        var outsideIssue = new JiraIssue(outsideQueue, "Unassigned ticket", null, "Done", "software", "Task");
+        JiraWorklog Worklog(string id, string key, int day, int hour, int minute, int minutes, string author = accountId)
+        {
+            var started = WorklogCalendarLayout.LocalDateTime(sunday.AddDays(day), new TimeOnly(hour, minute), TimeZoneInfo.Local);
+            return new JiraWorklog(id, key, started, minutes * 60, "Tester", null) { AuthorAccountId = author };
+        }
+
+        var client = new NullJiraClient
+        {
+            Discovered = [outsideIssue],
+            Worklogs =
+            [
+                Worklog("1", outsideQueue, -1, 10, 0, 20),
+                Worklog("2", outsideQueue, 0, 23, 30, 75),
+                Worklog("3", outsideQueue, 1, 10, 0, 45),
+                Worklog("4", selected.Key, 2, 10, 0, 35),
+                Worklog("5", outsideQueue, 3, 14, 0, 90),
+                Worklog("6", outsideQueue, 3, 16, 0, 60, "different-account"),
+            ],
+        };
+        var settings = new AppSettings { CalendarFirstDayOfWeek = DayOfWeek.Sunday };
+        var calendar = new WorklogCalendarWindow(selected, client, () => [], settings: () => settings);
+        typeof(WorklogCalendarWindow).GetField("_anchor", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(calendar, sunday.AddDays(3));
+        try
+        {
+            calendar.Show();
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal("Total: 4:05:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+            Assert.Equal(new WorklogCalendarRange(sunday, sunday.AddDays(7)),
+                CalendarField<WorklogCalendarRange>(calendar, "_timeRange"));
+
+            settings.CalendarFirstDayOfWeek = DayOfWeek.Monday;
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal("Total: 3:35:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+            Assert.Equal(new WorklogCalendarRange(sunday.AddDays(1), sunday.AddDays(8)),
+                CalendarField<WorklogCalendarRange>(calendar, "_timeRange"));
+        }
+        finally { calendar.Close(); }
+    }
+
     private static void AssertCalendarWorklogsStayInDayColumns(JiraIssue issue)
     {
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var firstDay = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+        var regionalFirstDay = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+        var firstDay = (DayOfWeek)(((int)regionalFirstDay + 1) % 7);
         var start = today.AddDays(-(7 + (int)today.DayOfWeek - (int)firstDay) % 7);
         var pending = Enumerable.Range(0, 7).SelectMany(day => Enumerable.Range(0, day % 2 + 1)
             .Select(lane => new PendingWorklog(Guid.NewGuid(), issue.Key,
@@ -247,6 +295,7 @@ public class WindowSmokeTests
         var active = new ActiveSession(issue.Key, now.AddMinutes(-2), now);
         var settings = new AppSettings
         {
+            CalendarFirstDayOfWeek = firstDay,
             DailyWorklogTargetMinutes = 60,
             WorklogTypeColors = [new("SD", issue.IssueType, "#203050")],
         };
@@ -279,6 +328,8 @@ public class WindowSmokeTests
                         block => block.ToolTip is string text && text.Contains("Running timer", StringComparison.Ordinal));
                     if (mode == 1)
                     {
+                        Assert.Equal(new WorklogCalendarRange(start, start.AddDays(7)),
+                            CalendarField<WorklogCalendarRange>(calendar, "_timeRange"));
                         var oneLogDay = Enumerable.Range(0, 7).First(day => day % 2 == 0 && start.AddDays(day) != today);
                         var total = Assert.IsType<Border>(totals.Children[oneLogDay + 1]);
                         var run = Assert.IsType<System.Windows.Documents.Run>(Assert.IsType<TextBlock>(total.Child).Inlines.FirstInline);
@@ -549,11 +600,14 @@ public class WindowSmokeTests
     private sealed class NullJiraClient : IJiraClient
     {
         public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }
+        public IReadOnlyList<JiraIssue> Discovered { get; init; } = [];
         public JiraWorklog? UpdatedWorklog { get; set; }
         public int UpdatedSeconds { get; private set; }
         public (string IssueKey, string WorklogId, string Text)? AddedWorklogComment { get; private set; }
         public JiraConnection Connection { get; } = new(new Uri("https://example.atlassian.net/"), "a@b.c", "t");
-        public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => Task.FromResult(new JiraUser("test-account", "Tester", null));
+        public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until, CancellationToken ct = default) =>
+            Task.FromResult(Discovered);
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
             Task.FromResult(JiraDurationSettings.Default);
         public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
@@ -561,7 +615,8 @@ public class WindowSmokeTests
         public Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default) => Task.FromResult<JiraSla?>(null);
         public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) =>
             Worklogs is null ? throw new NotSupportedException()
-                : Task.FromResult<IReadOnlyList<JiraWorklog>>(Worklogs.Where(worklog => worklog.IssueKey == issueKey).ToList());
+                : Task.FromResult<IReadOnlyList<JiraWorklog>>(Worklogs.Where(worklog => worklog.IssueKey == issueKey)
+                    .Select(worklog => worklog with { AuthorAccountId = worklog.AuthorAccountId ?? "test-account" }).ToList());
         public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default)
         {
