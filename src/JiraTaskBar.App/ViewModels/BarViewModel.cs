@@ -13,6 +13,7 @@ public sealed partial class BarViewModel : ObservableObject
     private readonly AppController _app;
     private readonly Dictionary<string, TicketViewModel> _byKey = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<JiraIssue> _lastIssues = [];
+    private int _pinnedCount;
     private IJiraClient? _slaOwner;
     private long _lastFilterMinute = long.MinValue;
 
@@ -87,7 +88,7 @@ public sealed partial class BarViewModel : ObservableObject
         IsRefreshing = true;
         try
         {
-            var (issues, warning) = await _app.FetchIssuesAsync();
+            var (issues, pinnedCount, warning) = await _app.FetchIssuesAsync();
             if (!ReferenceEquals(_app.Client, client)) return;
             if (ReferenceEquals(_slaOwner, client))
             {
@@ -99,6 +100,7 @@ public sealed partial class BarViewModel : ObservableObject
             }
             _slaOwner = client;
             _lastIssues = issues;
+            _pinnedCount = pinnedCount;
             _app.ReportAuthSuccess();
             StatusMessage = warning;
             Rebuild();
@@ -202,23 +204,31 @@ public sealed partial class BarViewModel : ObservableObject
         var now = DateTimeOffset.UtcNow;
         var target = new List<TicketViewModel>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visiblePins = 0;
 
-        foreach (var issue in _lastIssues)
+        for (var index = 0; index < _lastIssues.Count; index++)
         {
+            var issue = _lastIssues[index];
+            var isPinned = index < _pinnedCount;
             var vm = GetOrCreate(issue);
             vm.Issue = issue;
             vm.IsStale = false;
-            if (!Filter.Matches(issue, now, TimeZoneInfo.Local)) continue;
+            if (!Filter.Matches(issue, now, TimeZoneInfo.Local))
+            {
+                if (!isPinned || !issue.Key.Equals(activeKey, StringComparison.OrdinalIgnoreCase)) continue;
+                vm.IsStale = true;
+            }
             target.Add(vm);
             seen.Add(issue.Key);
+            if (isPinned) visiblePins++;
         }
 
-        // The running ticket stays on the bar (dimmed) even if it no longer matches the query.
+        // A running ticket outside the visible list stays in the queue section.
         if (activeKey is not null && !seen.Contains(activeKey))
         {
             var vm = _byKey.GetValueOrDefault(activeKey) ?? GetOrCreate(TicketViewModel.Placeholder(activeKey));
             vm.IsStale = true;
-            var index = target.FindIndex(t => t.Issue.PriorityRank > vm.Issue.PriorityRank);
+            var index = target.FindIndex(visiblePins, t => t.Issue.PriorityRank > vm.Issue.PriorityRank);
             target.Insert(index < 0 ? target.Count : index, vm);
         }
 

@@ -217,6 +217,7 @@ public class WindowSmokeTests
             settings.Close();
 
             AssertAddedTicketsJoinTheQueue(controller, bar, issue);
+            AssertFilteredRunningTicketsPreservePinOrder(controller, issue);
             typeof(AppController).GetProperty(nameof(AppController.IsExiting))!.SetValue(controller, true);
             bar.Close();
             controller.Dispose();
@@ -272,9 +273,10 @@ public class WindowSmokeTests
             [issue.Key.ToLowerInvariant(), requestedKey, "TEST-999"];
         try
         {
-            var (issues, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            var (issues, pinnedCount, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
             Assert.Equal([requestedKey, "TEST-999"], client.RequestedAddedKeys.Order());
             Assert.Equal([issue.Key, manualIssue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+            Assert.Equal(2, pinnedCount);
             Assert.Contains("one added ticket", warning);
             controller.Bar.StatusMessage = warning;
             bar.UpdateLayout();
@@ -290,23 +292,25 @@ public class WindowSmokeTests
             var persisted = store.Load()!.AdditionalTicketKeysBySite[site];
             Assert.Equal(newOrder, persisted);
             controller.Settings.AdditionalTicketKeysBySite[site] = persisted;
-            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            (issues, _, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
             Assert.Equal([manualIssue.Key, issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
 
             client.QueueIssues = [queueOnly];
             client.AddedLookups = [new(requestedKey, manualIssue), new(issue.Key, issue), new("TEST-999", null)];
-            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            (issues, pinnedCount, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
             Assert.Equal([manualIssue.Key, issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+            Assert.Equal(2, pinnedCount);
             client.QueueIssues = [queueOnly, issue];
 
             client.AddedLookups = [new(requestedKey, null, CanRetry: true), new("TEST-999", null)];
-            (issues, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            (issues, _, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
             Assert.Equal([manualIssue.Key, issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
             Assert.Contains("previously loaded", warning);
 
             client.AddedLookups = [new(requestedKey, null), new("TEST-999", null)];
-            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            (issues, pinnedCount, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
             Assert.Equal([issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+            Assert.Equal(1, pinnedCount);
             client.AddedLookups = [new(requestedKey, manualIssue), new("TEST-999", null)];
             _ = controller.FetchIssuesAsync().GetAwaiter().GetResult();
 
@@ -316,18 +320,54 @@ public class WindowSmokeTests
                 QueueIssues = [issue],
             };
             clientProperty.SetValue(controller, otherClient);
-            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            (issues, pinnedCount, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
             Assert.Empty(otherClient.RequestedAddedKeys);
             Assert.Equal(issue.Key, Assert.Single(issues).Key);
+            Assert.Equal(0, pinnedCount);
             controller.Settings.AdditionalTicketKeysBySite[otherClient.Connection.SiteUrl.AbsoluteUri] = [requestedKey];
             otherClient.AddedLookups = [new(requestedKey, null, CanRetry: true)];
-            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            (issues, _, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
             Assert.Equal(issue.Key, Assert.Single(issues).Key);
         }
         finally
         {
             controller.Bar.StatusMessage = null;
             clientProperty.SetValue(controller, original);
+        }
+    }
+
+    private static void AssertFilteredRunningTicketsPreservePinOrder(AppController controller, JiraIssue template)
+    {
+        var firstPin = template with { Key = "PIN-1", Summary = "Visible pin", Priority = new JiraPriority("5", "Low", 5) };
+        var secondPin = template with { Key = "PIN-2", Summary = "Hidden pin", Priority = new JiraPriority("1", "Highest", 1) };
+        var runningQueue = template with { Key = "QUEUE-1", Summary = "Hidden queue ticket", Priority = new JiraPriority("2", "High", 2) };
+        var visibleQueue = template with { Key = "QUEUE-2", Summary = "Visible queue ticket", Priority = new JiraPriority("4", "Normal", 4) };
+        var bar = controller.Bar;
+        var issuesField = typeof(BarViewModel).GetField("_lastIssues", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var pinsField = typeof(BarViewModel).GetField("_pinnedCount", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var previousIssues = issuesField.GetValue(bar);
+        var previousPinCount = pinsField.GetValue(bar);
+        var previousFilter = bar.Filter;
+        issuesField.SetValue(bar, new[] { firstPin, secondPin, runningQueue, visibleQueue });
+        pinsField.SetValue(bar, 2);
+        try
+        {
+            bar.ApplyFilter(new TicketFilter { Summary = "Visible" });
+            controller.Tracker.Start(runningQueue.Key);
+            Assert.Equal([firstPin.Key, runningQueue.Key, visibleQueue.Key], bar.Tickets.Select(ticket => ticket.Key));
+            Assert.True(bar.Tickets[1].IsStale);
+            controller.Tracker.Stop(controller.Tracker.Active!.StartedUtc);
+
+            controller.Tracker.Start(secondPin.Key);
+            Assert.Equal([firstPin.Key, secondPin.Key, visibleQueue.Key], bar.Tickets.Select(ticket => ticket.Key));
+            Assert.True(bar.Tickets[1].IsStale);
+        }
+        finally
+        {
+            if (controller.Tracker.Active is { } active) controller.Tracker.Stop(active.StartedUtc);
+            issuesField.SetValue(bar, previousIssues);
+            pinsField.SetValue(bar, previousPinCount);
+            bar.ApplyFilter(previousFilter);
         }
     }
 
