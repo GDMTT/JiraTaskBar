@@ -92,13 +92,19 @@
             <TabItem x:Name="AddTicketsTab" Header="Add tickets">
                 <ScrollViewer Style="{StaticResource SettingsTabScroll}">
                     <StackPanel>
-                        <Label Content="Additional ticket _keys" Target="{Binding ElementName=AdditionalTicketsBox}"
+                        <Label Content="Pinned ticket _keys" Target="{Binding ElementName=AdditionalTicketsBox}"
                                Padding="0" FontWeight="SemiBold" />
-                        <TextBlock Text="Choose a site in Jira connection, then enter its ticket keys, one per line or separated by commas. Remove a key to stop adding that ticket."
+                        <TextBlock Text="Enter ticket keys for the selected Jira site. Pinned tickets appear above the queue in the order shown here. Remove a key to unpin it."
                                    TextWrapping="Wrap" Opacity="0.75" Margin="0,4,0,0" />
                         <ui:TextBox x:Name="AdditionalTicketsBox" Margin="0,8,0,0" AcceptsReturn="True" MinLines="4" MaxLines="12"
                                     VerticalScrollBarVisibility="Auto" FontFamily="Consolas"
-                                    ToolTip="Show these Jira tickets alongside your queue, even when they do not match your Jira query." />
+                                    ToolTip="Enter keys such as ABC-123, one per line or separated by commas. Taskbar filters apply to pinned tickets." />
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0" IsEnabled="{Binding ElementName=AdditionalTicketsBox, Path=IsEnabled}">
+                            <ui:Button x:Name="MoveTicketLineUp" Content="Move line up" Click="MoveTicketLineUp_Click" Margin="0,0,8,0"
+                                       ToolTip="Move the line containing the text cursor before the previous line of keys." />
+                            <ui:Button x:Name="MoveTicketLineDown" Content="Move line down" Click="MoveTicketLineDown_Click"
+                                       ToolTip="Move the line containing the text cursor after the next line of keys." />
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -109,7 +115,7 @@
                         <ui:ToggleSwitch x:Name="ShowTitlesSwitch" Margin="0,0,0,12"
                                          Content="Show ticket titles on the bar"
                                          ToolTip="Off: buttons show only the ticket key; hover to see the title." />
-                        <TextBlock Text="Tickets are ordered by Jira priority, then by key. Taskbar filters apply to all tickets."
+                        <TextBlock Text="Pinned tickets appear first. Queue tickets are ordered by Jira priority, then by key. Taskbar filters apply to all tickets."
                                    TextWrapping="Wrap" Opacity="0.75" />
                     </StackPanel>
                 </ScrollViewer>

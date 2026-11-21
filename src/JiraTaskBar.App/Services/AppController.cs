@@ -276,7 +276,7 @@ public sealed class AppController : IDisposable
         }
     }
 
-    public async Task<(IReadOnlyList<JiraIssue> Issues, string? Warning)> FetchIssuesAsync()
+    public async Task<(IReadOnlyList<JiraIssue> Issues, int PinnedCount, string? Warning)> FetchIssuesAsync()
     {
         var client = Client ?? throw new InvalidOperationException("Not connected to Jira.");
         var settings = Settings;
@@ -298,11 +298,12 @@ public sealed class AppController : IDisposable
             Log.Error("Could not load Jira duration settings; using default duration units", ex);
         }
         var issues = await client.SearchAsync(settings.Jql, priorities);
-        var configuredKeys = settings.AdditionalTicketKeysBySite?.GetValueOrDefault(client.Connection.SiteUrl.AbsoluteUri) ?? [];
-        var additionalKeys = configuredKeys.Where(key => !string.IsNullOrWhiteSpace(key)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var configuredKeys = (settings.AdditionalTicketKeysBySite?.GetValueOrDefault(client.Connection.SiteUrl.AbsoluteUri) ?? [])
+            .Where(key => !string.IsNullOrWhiteSpace(key)).ToArray();
+        var additionalKeys = configuredKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var obsoleteKey in additionalTicketCache.Keys.Where(key => !additionalKeys.Contains(key)).ToArray())
             additionalTicketCache.Remove(obsoleteKey);
-        if (additionalKeys.Count == 0) return (issues, null);
+        if (additionalKeys.Count == 0) return (issues, 0, null);
 
         foreach (var issue in issues)
             if (additionalKeys.Remove(issue.Key)) additionalTicketCache[issue.Key] = issue;
@@ -325,9 +326,14 @@ public sealed class AppController : IDisposable
                 else additionalTicketCache.Remove(lookup.RequestedKey);
             }
         }
-        var allIssues = IssueOrdering.Sort(issues.Concat(lookups.Select(lookup => lookup.Issue).OfType<JiraIssue>())
-            .Concat(additionalTicketCache.Values)
-            .DistinctBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase));
+        var currentByKey = issues.Concat(lookups.Select(lookup => lookup.Issue).OfType<JiraIssue>())
+            .GroupBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var pinned = configuredKeys.Select(key => additionalTicketCache.GetValueOrDefault(key)).OfType<JiraIssue>()
+            .Select(issue => currentByKey.GetValueOrDefault(issue.Key, issue));
+        var displayedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var distinctPins = pinned.Where(issue => displayedKeys.Add(issue.Key)).ToArray();
+        var allIssues = distinctPins.Concat(issues.Where(issue => displayedKeys.Add(issue.Key))).ToArray();
         var warning = failed switch
         {
             0 => null,
@@ -335,7 +341,7 @@ public sealed class AppController : IDisposable
             _ => $"Could not refresh {failed} added tickets.",
         };
         if (retained > 0) warning += $" Showing previously loaded details for {retained} added ticket(s).";
-        return (allIssues, warning);
+        return (allIssues, distinctPins.Length, warning);
     }
 
     public void ToggleTimer(string key) => Tracker.Toggle(key);
