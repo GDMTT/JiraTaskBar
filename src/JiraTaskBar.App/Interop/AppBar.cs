@@ -65,6 +65,13 @@ internal sealed class AppBar : IDisposable
         Edge = DockEdge.Floating;
     }
 
+    public void Resize(double thicknessDip)
+    {
+        if (!_registered || _thicknessDip == thicknessDip) return;
+        _thicknessDip = thicknessDip;
+        UpdatePosition();
+    }
+
     /// <summary>The rectangle (physical pixels) the bar would occupy if docked to <paramref name="edge"/>.</summary>
     public static RECT EdgeRect(MonitorInfo monitor, DockEdge edge, double thicknessDip)
     {

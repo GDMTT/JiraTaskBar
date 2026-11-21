@@ -98,11 +98,20 @@ public class WindowSmokeTests
             CapturePrivacy.Apply(bar, enabled: true);
             Assert.True(CapturePrivacy.Enabled);
             CapturePrivacy.Apply(bar, enabled: false);
-            var keysOnly = new TicketViewModel(issue, _ => { }, _ => { }, _ => { }, showTitles: () => false);
+            var ticketDisplay = new AppSettings { ShowTitlesOnBar = false };
+            var keysOnly = new TicketViewModel(issue, _ => { }, _ => { }, _ => { }, settings: () => ticketDisplay);
             Assert.False(keysOnly.HasSubtitle);
             keysOnly.IsActive = true;
             keysOnly.ElapsedText = "0:05";
-            Assert.True(keysOnly.HasSubtitle);
+            Assert.False(keysOnly.HasSubtitle);
+            Assert.Equal("● 0:05", keysOnly.TimerText);
+            ticketDisplay.ShowTitlesOnBar = true;
+            Assert.Equal(issue.Summary, keysOnly.SubtitleText);
+            ticketDisplay.ShowTicketNumbersOnBar = false;
+            Assert.Equal(issue.Summary, keysOnly.PrimaryText);
+            Assert.False(keysOnly.HasSubtitle);
+            ticketDisplay.ShowTitlesOnBar = false;
+            Assert.Equal(issue.Key, keysOnly.PrimaryText);
 
             // Issue type: glyph until Jira's icon loads, then the icon.
             Assert.True(keysOnly.ShowTypeGlyph);
@@ -207,6 +216,26 @@ public class WindowSmokeTests
                 Assert.True(headerPosition.X >= previousRight);
                 previousRight = headerPosition.X + tab.ActualWidth;
             }
+            tabs.SelectedItem = settings.FindName("TicketsTab");
+            settings.UpdateLayout();
+            var titles = (ToggleButton)settings.FindName("ShowTitlesSwitch");
+            var numbers = (ToggleButton)settings.FindName("ShowNumbersSwitch");
+            Assert.True(titles.IsChecked);
+            Assert.True(numbers.IsChecked);
+            Assert.True(((ToggleButton)settings.FindName("ShowPrioritySwitch")).IsChecked);
+            Assert.True(((ToggleButton)settings.FindName("ShowTypeSwitch")).IsChecked);
+            numbers.IsChecked = false;
+            Assert.False(titles.IsEnabled);
+            numbers.IsChecked = true;
+            titles.IsChecked = false;
+            Assert.False(numbers.IsEnabled);
+            var grouping = (ComboBox)settings.FindName("TicketGroupBox");
+            var sorting = (ComboBox)settings.FindName("TicketSortBox");
+            grouping.SelectedValue = TicketGrouping.Priority;
+            Assert.Equal(TicketSort.Number, sorting.SelectedValue);
+            Assert.False(((ComboBoxItem)settings.FindName("PrioritySortItem")).IsEnabled);
+            grouping.SelectedValue = TicketGrouping.Project;
+            Assert.True(((ComboBoxItem)settings.FindName("PrioritySortItem")).IsEnabled);
             var additionalTickets = (TextBox)settings.FindName("AdditionalTicketsBox");
             Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
             tabs.SelectedItem = settings.FindName("AddTicketsTab");
@@ -531,10 +560,45 @@ public class WindowSmokeTests
             controller.Tracker.Start(secondPin.Key);
             Assert.Equal([firstPin.Key, secondPin.Key, visibleQueue.Key], bar.Tickets.Select(ticket => ticket.Key));
             Assert.True(bar.Tickets[1].IsStale);
+            controller.Tracker.Stop(controller.Tracker.Active!.StartedUtc);
+
+            var paused = new JiraSla("Time to Resolution", false, false, true, 10000, 5000);
+            var breached = paused with { Breached = true, RemainingMilliseconds = -1000 };
+            var fast = runningQueue with { Key = "Z-2", IssueType = "Bug", Sla = breached };
+            var slow = visibleQueue with { Key = "A-10", IssueType = "Bug", Sla = paused };
+            var missing = visibleQueue with { Key = "A-3", IssueType = "Task" };
+            issuesField.SetValue(bar, new[] { firstPin, secondPin, fast, slow, missing });
+            bar.ApplyFilter(new TicketFilter());
+            controller.Settings.TicketSort = TicketSort.Number;
+            bar.RefreshDisplay();
+            Assert.Equal([firstPin.Key, secondPin.Key, fast.Key, missing.Key, slow.Key], bar.Tickets.Select(t => t.Key));
+            controller.Settings.TicketGrouping = TicketGrouping.Type;
+            controller.Settings.TicketSort = TicketSort.ResolutionSla;
+            bar.RefreshDisplay();
+            Assert.Equal([firstPin.Key, secondPin.Key, fast.Key, slow.Key, missing.Key], bar.Tickets.Select(t => t.Key));
+            Assert.Equal(["Bug", "Task"], bar.Tickets.Select(t => t.GroupLabel).Where(label => !string.IsNullOrEmpty(label)));
+            controller.Settings.SortTicketsDescending = true;
+            bar.RefreshDisplay();
+            Assert.Equal([firstPin.Key, secondPin.Key, slow.Key, fast.Key, missing.Key], bar.Tickets.Select(t => t.Key));
+            controller.Settings.TicketGrouping = TicketGrouping.Project;
+            bar.RefreshDisplay();
+            Assert.Equal([firstPin.Key, secondPin.Key, slow.Key, missing.Key, fast.Key], bar.Tickets.Select(t => t.Key));
+            Assert.Equal(["A", "Z"], bar.Tickets.Select(t => t.GroupLabel).Where(label => !string.IsNullOrEmpty(label)));
+            controller.Settings.TicketGrouping = TicketGrouping.Priority;
+            controller.Settings.TicketSort = TicketSort.Priority;
+            bar.RefreshDisplay();
+            Assert.Equal([firstPin.Key, secondPin.Key, fast.Key, slow.Key, missing.Key], bar.Tickets.Select(t => t.Key));
+            Assert.Equal(["High", "Normal"], bar.Tickets.Select(t => t.GroupLabel).Where(label => !string.IsNullOrEmpty(label)));
+            controller.Settings.TicketGrouping = TicketGrouping.None;
+            bar.RefreshDisplay();
+            Assert.All(bar.Tickets, t => Assert.Null(t.GroupLabel));
         }
         finally
         {
             if (controller.Tracker.Active is { } active) controller.Tracker.Stop(active.StartedUtc);
+            controller.Settings.TicketGrouping = TicketGrouping.None;
+            controller.Settings.TicketSort = TicketSort.Priority;
+            controller.Settings.SortTicketsDescending = false;
             issuesField.SetValue(bar, previousIssues);
             pinsField.SetValue(bar, previousPinCount);
             bar.ApplyFilter(previousFilter);

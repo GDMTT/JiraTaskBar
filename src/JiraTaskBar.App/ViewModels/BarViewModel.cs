@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using JiraTaskBar.App.Services;
 using JiraTaskBar.Core.Jira;
+using JiraTaskBar.Core.Storage;
 
 namespace JiraTaskBar.App.ViewModels;
 
@@ -15,7 +16,7 @@ public sealed partial class BarViewModel : ObservableObject
     private IReadOnlyList<JiraIssue> _lastIssues = [];
     private int _pinnedCount;
     private IJiraClient? _slaOwner;
-    private long _lastFilterMinute = long.MinValue;
+    private long _lastRebuildMinute = long.MinValue;
     private bool _refreshRequested;
 
     public BarViewModel(AppController app)
@@ -38,7 +39,6 @@ public sealed partial class BarViewModel : ObservableObject
     public void ApplyFilter(TicketFilter filter)
     {
         Filter = filter;
-        _lastFilterMinute = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60;
         OnPropertyChanged(nameof(FilterLabel));
         OnPropertyChanged(nameof(FilterTooltip));
         OnPropertyChanged(nameof(EmptyText));
@@ -187,11 +187,9 @@ public sealed partial class BarViewModel : ObservableObject
     public void Tick()
     {
         var minute = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60;
-        if (Filter.UsesCurrentTime && minute != _lastFilterMinute)
-        {
-            _lastFilterMinute = minute;
+        if (minute != _lastRebuildMinute &&
+            (Filter.UsesCurrentTime || _app.Settings.EffectiveTicketSort == TicketSort.ResolutionSla))
             Rebuild();
-        }
         var activeKey = _app.Tracker.ActiveKey;
         foreach (var t in Tickets)
         {
@@ -204,10 +202,10 @@ public sealed partial class BarViewModel : ObservableObject
 
     public TicketViewModel? Find(string key) => _byKey.GetValueOrDefault(key);
 
-    /// <summary>Re-renders button text after the show-titles setting changes.</summary>
-    public void RefreshTitles()
+    public void RefreshDisplay()
     {
-        foreach (var t in Tickets) t.RefreshSubtitle();
+        Rebuild();
+        foreach (var t in Tickets) t.RefreshDisplay();
     }
 
     /// <summary>Refreshes commands whose availability depends on the Jira connection.</summary>
@@ -220,6 +218,7 @@ public sealed partial class BarViewModel : ObservableObject
     {
         var activeKey = _app.Tracker.ActiveKey;
         var now = DateTimeOffset.UtcNow;
+        _lastRebuildMinute = now.ToUnixTimeSeconds() / 60;
         var target = new List<TicketViewModel>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var visiblePins = 0;
@@ -246,9 +245,10 @@ public sealed partial class BarViewModel : ObservableObject
         {
             var vm = _byKey.GetValueOrDefault(activeKey) ?? GetOrCreate(TicketViewModel.Placeholder(activeKey));
             vm.IsStale = true;
-            var index = target.FindIndex(visiblePins, t => t.Issue.PriorityRank > vm.Issue.PriorityRank);
-            target.Insert(index < 0 ? target.Count : index, vm);
+            target.Add(vm);
         }
+
+        ApplyQueueLayout(target, visiblePins, now);
 
         // Move/insert in place so existing buttons (and hover state) survive refreshes.
         for (var i = 0; i < target.Count; i++)
@@ -267,6 +267,62 @@ public sealed partial class BarViewModel : ObservableObject
             _byKey.Remove(key);
     }
 
+    private void ApplyQueueLayout(List<TicketViewModel> target, int visiblePins, DateTimeOffset now)
+    {
+        var settings = _app.Settings;
+        var grouping = settings.TicketGrouping;
+        var queue = target.Skip(visiblePins).ToArray();
+        target.RemoveRange(visiblePins, target.Count - visiblePins);
+
+        var groups = queue.GroupBy(ticket => grouping switch
+        {
+            TicketGrouping.Priority => ticket.PriorityLabel,
+            TicketGrouping.Type => string.IsNullOrWhiteSpace(ticket.Issue.IssueType) ? "No type" : ticket.Issue.IssueType,
+            TicketGrouping.Project => IssueOrdering.ProjectPart(ticket.Key),
+            _ => string.Empty,
+        }, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => grouping == TicketGrouping.Priority ? group.First().Issue.PriorityRank : 0)
+            .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase).ToArray();
+
+        var showHeaders = settings.HasTicketGrouping && groups.Length > 0;
+        foreach (var pin in target) pin.GroupLabel = showHeaders ? string.Empty : null;
+
+        foreach (var group in groups)
+        {
+            var first = true;
+            foreach (var ticket in SortQueue(group, settings, now))
+            {
+                ticket.GroupLabel = showHeaders ? (first ? group.Key : string.Empty) : null;
+                target.Add(ticket);
+                first = false;
+            }
+        }
+    }
+
+    private static IEnumerable<TicketViewModel> SortQueue(IEnumerable<TicketViewModel> tickets, AppSettings settings,
+        DateTimeOffset now)
+    {
+        var sort = settings.EffectiveTicketSort;
+        var descending = settings.SortTicketsDescending;
+        var byProject = StringComparer.OrdinalIgnoreCase;
+        if (sort == TicketSort.Number)
+        {
+            return descending
+                ? tickets.OrderByDescending(ticket => IssueOrdering.NumberPart(ticket.Key))
+                    .ThenByDescending(ticket => IssueOrdering.ProjectPart(ticket.Key), byProject)
+                : tickets.OrderBy(ticket => IssueOrdering.NumberPart(ticket.Key))
+                    .ThenBy(ticket => IssueOrdering.ProjectPart(ticket.Key), byProject);
+        }
+
+        var withSortValues = tickets.Select(ticket => (Ticket: ticket, Value: sort == TicketSort.ResolutionSla
+            ? ticket.Issue.Sla?.RemainingForSort(now) : ticket.Issue.Priority?.Rank));
+        return withSortValues.OrderBy(item => item.Value is null)
+            .ThenBy(item => descending ? -item.Value : item.Value)
+            .ThenBy(item => IssueOrdering.ProjectPart(item.Ticket.Key), byProject)
+            .ThenBy(item => IssueOrdering.NumberPart(item.Ticket.Key))
+            .Select(item => item.Ticket);
+    }
+
     /// <summary>Shows the issue type's Jira icon (cached per type); the built-in glyph stays if it can't load.</summary>
     private async Task LoadTypeIconAsync(TicketViewModel ticket)
     {
@@ -283,7 +339,7 @@ public sealed partial class BarViewModel : ObservableObject
             toggle: t => _app.ToggleTimer(t.Key),
             open: t => _app.OpenInBrowser(t.Key),
             comment: t => _app.OpenCommentEditor(t),
-            showTitles: () => _app.Settings.ShowTitlesOnBar,
+            settings: () => _app.Settings,
             canComment: () => _app.Client is not null,
             calendar: t => _app.OpenWorklogCalendar(t));
         _byKey[issue.Key] = vm;
