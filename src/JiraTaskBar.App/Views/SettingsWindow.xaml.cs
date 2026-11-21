@@ -15,6 +15,9 @@ namespace JiraTaskBar.App.Views;
 public partial class SettingsWindow : FluentWindow
 {
     private readonly StoredCredentials? _saved;
+    private readonly Dictionary<string, string> _additionalTicketDrafts = new(StringComparer.OrdinalIgnoreCase);
+    private string? _additionalTicketSite;
+    private bool _ticketDraftsLoaded;
     /// <summary>The cloud ID confirmed by the last successful test (scoped tokens only).</summary>
     private string? _testedCloudId;
 
@@ -35,7 +38,11 @@ public partial class SettingsWindow : FluentWindow
         (saved is { CloudId: null } ? ClassicRadio : ScopedRadio).IsChecked = true;
 
         JqlBox.Text = current.Jql;
-        AdditionalTicketsBox.Text = string.Join(Environment.NewLine, current.AdditionalTicketKeys ?? []);
+        foreach (var (site, keys) in current.AdditionalTicketKeysBySite ?? [])
+            _additionalTicketDrafts[site] = string.Join(Environment.NewLine, keys ?? []);
+        AdditionalTicketsBox.IsEnabled = false;
+        _ticketDraftsLoaded = true;
+        UpdateAdditionalTicketSite();
         RefreshBox.Value = current.RefreshMinutes;
         IdleBox.Value = current.IdlePromptMinutes;
         ShortSessionBox.SelectedIndex = current.ShortSessions == ShortSessionMode.RoundUpToMinute ? 0 : 1;
@@ -96,6 +103,29 @@ public partial class SettingsWindow : FluentWindow
         if (ScopedPanel is null || ClassicWarning is null) return;
         ScopedPanel.Visibility = IsScoped ? Visibility.Visible : Visibility.Collapsed;
         ClassicWarning.Visibility = IsScoped ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void SiteBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (!_ticketDraftsLoaded) return;
+        var previous = _additionalTicketSite;
+        UpdateAdditionalTicketSite();
+        if (!string.Equals(previous, _additionalTicketSite, StringComparison.OrdinalIgnoreCase))
+            CloudIdBox.Text = string.Equals(_additionalTicketSite, _saved?.SiteUrl, StringComparison.OrdinalIgnoreCase)
+                ? _saved?.CloudId ?? string.Empty : string.Empty;
+    }
+
+    private void UpdateAdditionalTicketSite()
+    {
+        string? site;
+        try { site = JiraConnection.NormalizeSiteUrl(SiteBox.Text).AbsoluteUri; }
+        catch (ArgumentException) { site = null; }
+        if (string.Equals(_additionalTicketSite, site, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (_additionalTicketSite is { } previous) _additionalTicketDrafts[previous] = AdditionalTicketsBox.Text;
+        _additionalTicketSite = site;
+        AdditionalTicketsBox.IsEnabled = site is not null;
+        AdditionalTicketsBox.Text = site is not null && _additionalTicketDrafts.TryGetValue(site, out var text) ? text : string.Empty;
     }
 
     /// <summary>
@@ -165,10 +195,13 @@ public partial class SettingsWindow : FluentWindow
         var site = JiraConnection.NormalizeSiteUrl(SiteBox.Text);
         Credentials = new StoredCredentials(site.ToString(), EmailBox.Text.Trim(), ResolveToken(site)!,
             IsScoped ? _testedCloudId : null);
+        var siteKeys = new Dictionary<string, string[]>(Result.AdditionalTicketKeysBySite ?? [], StringComparer.OrdinalIgnoreCase);
+        if (additionalKeys.Length == 0) siteKeys.Remove(site.AbsoluteUri);
+        else siteKeys[site.AbsoluteUri] = additionalKeys;
         Result = new AppSettings
         {
             Jql = string.IsNullOrWhiteSpace(JqlBox.Text) ? AppSettings.DefaultJql : JqlBox.Text.Trim(),
-            AdditionalTicketKeys = additionalKeys,
+            AdditionalTicketKeysBySite = siteKeys,
             RefreshMinutes = (int)Math.Clamp(RefreshBox.Value ?? 5, 1, 120),
             IdlePromptMinutes = (int)Math.Clamp(IdleBox.Value ?? 10, 0, 480),
             ShortSessions = ShortSessionBox.SelectedIndex == 0 ? ShortSessionMode.RoundUpToMinute : ShortSessionMode.Skip,
@@ -268,7 +301,7 @@ public partial class SettingsWindow : FluentWindow
             return TestOutcome.Invalid;
         }
 
-        TestButton.IsEnabled = SaveButton.IsEnabled = false;
+        SettingsTabs.IsEnabled = TestButton.IsEnabled = SaveButton.IsEnabled = false;
         ShowStatus(InfoBarSeverity.Informational, "Connecting…");
         try
         {
@@ -310,7 +343,7 @@ public partial class SettingsWindow : FluentWindow
         }
         finally
         {
-            TestButton.IsEnabled = SaveButton.IsEnabled = true;
+            SettingsTabs.IsEnabled = TestButton.IsEnabled = SaveButton.IsEnabled = true;
         }
     }
 

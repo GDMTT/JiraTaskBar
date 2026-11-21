@@ -80,26 +80,34 @@ public class JiraClientTests
     }
 
     [Fact]
-    public async Task Added_ticket_lookup_returns_available_issues_with_a_partial_failure_count()
+    public async Task Added_ticket_lookup_associates_a_moved_issue_with_its_requested_key()
     {
         var (client, handler) = Create();
-        handler.Respond("""
-            {"issues":[{"key":"ABC-2","fields":{"summary":"Outside the queue","priority":{"id":"4"}}}],
-             "issueErrors":[{"issueIdOrKey":"ABC-999","status":404,"errorMessages":["Issue not found"]}]}
-            """);
+        handler.Respond("""{"key":"ABC-2","fields":{"summary":"Outside the queue","priority":{"id":"4"}}}""");
 
-        var (issues, failed) = await client.FetchIssuesByKeyAsync(["ABC-2", "abc-2", "ABC-999"],
-            [new JiraPriority("4", "Medium", 2)]);
+        var result = Assert.Single(await client.FetchIssuesByKeyAsync(["OLD-2", "old-2"],
+            [new JiraPriority("4", "Medium", 2)]));
 
-        var issue = Assert.Single(issues);
-        Assert.Equal("ABC-2", issue.Key);
-        Assert.Equal(2, issue.PriorityRank);
-        Assert.Equal(1, failed);
+        Assert.Equal("OLD-2", result.RequestedKey);
+        Assert.Equal("ABC-2", result.Issue!.Key);
+        Assert.Equal(2, result.Issue.PriorityRank);
         var request = Assert.Single(handler.Requests);
-        Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("/rest/api/3/issue/bulkfetch", request.PathAndQuery);
-        var body = JsonNode.Parse(request.Body!)!;
-        Assert.Equal(["ABC-2", "ABC-999"], body["issueIdsOrKeys"]!.AsArray().Select(key => key!.GetValue<string>()));
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.StartsWith("/rest/api/3/issue/OLD-2?fields=", request.PathAndQuery);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, false)]
+    [InlineData(HttpStatusCode.Forbidden, false)]
+    [InlineData(HttpStatusCode.BadGateway, true)]
+    [InlineData(HttpStatusCode.RequestTimeout, true)]
+    public async Task Added_ticket_lookup_distinguishes_missing_issues_from_retryable_failures(HttpStatusCode status, bool canRetry)
+    {
+        var (client, handler) = Create();
+        handler.Respond("{}", status);
+
+        Assert.Equal(new JiraIssueLookup("ABC-2", null, canRetry),
+            Assert.Single(await client.FetchIssuesByKeyAsync(["ABC-2"], [])));
     }
 
     [Fact]

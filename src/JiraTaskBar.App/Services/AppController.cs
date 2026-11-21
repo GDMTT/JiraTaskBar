@@ -37,6 +37,8 @@ public sealed class AppController : IDisposable
     private HttpClient? _http;
     private IReadOnlyList<JiraPriority>? _priorities;
     private JiraDurationSettings? _durationSettings;
+    private IJiraClient? _additionalTicketClient;
+    private Dictionary<string, JiraIssue> _additionalTicketCache = new(StringComparer.OrdinalIgnoreCase);
     private TaskbarIcon? _tray;
     private BarWindow? _bar;
     private ContextReportWindow? _contextReportWindow;
@@ -278,6 +280,12 @@ public sealed class AppController : IDisposable
     {
         var client = Client ?? throw new InvalidOperationException("Not connected to Jira.");
         var settings = Settings;
+        if (!ReferenceEquals(client, _additionalTicketClient))
+        {
+            _additionalTicketClient = client;
+            _additionalTicketCache = new(StringComparer.OrdinalIgnoreCase);
+        }
+        var additionalTicketCache = _additionalTicketCache;
         var priorities = _priorities ??= await client.GetPrioritiesAsync();
         try
         {
@@ -290,18 +298,43 @@ public sealed class AppController : IDisposable
             Log.Error("Could not load Jira duration settings; using default duration units", ex);
         }
         var issues = await client.SearchAsync(settings.Jql, priorities);
-        var additionalKeys = (settings.AdditionalTicketKeys ?? []).Where(key => !string.IsNullOrWhiteSpace(key))
-            .Except(issues.Select(issue => issue.Key), StringComparer.OrdinalIgnoreCase).ToArray();
-        if (additionalKeys.Length == 0) return (issues, null);
+        var configuredKeys = settings.AdditionalTicketKeysBySite?.GetValueOrDefault(client.Connection.SiteUrl.AbsoluteUri) ?? [];
+        var additionalKeys = configuredKeys.Where(key => !string.IsNullOrWhiteSpace(key)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var obsoleteKey in additionalTicketCache.Keys.Where(key => !additionalKeys.Contains(key)).ToArray())
+            additionalTicketCache.Remove(obsoleteKey);
+        if (additionalKeys.Count == 0) return (issues, null);
 
-        var (additionalIssues, failed) = await client.FetchIssuesByKeyAsync(additionalKeys, priorities);
-        var allIssues = IssueOrdering.Sort(issues.Concat(additionalIssues).DistinctBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase));
+        foreach (var issue in issues)
+            if (additionalKeys.Remove(issue.Key)) additionalTicketCache[issue.Key] = issue;
+
+        IReadOnlyList<JiraIssueLookup> lookups = additionalKeys.Count == 0
+            ? [] : await client.FetchIssuesByKeyAsync(additionalKeys.ToArray(), priorities);
+        var failed = 0;
+        var retained = 0;
+        foreach (var lookup in lookups)
+        {
+            if (lookup.Issue is { } issue)
+                additionalTicketCache[lookup.RequestedKey] = issue;
+            else
+            {
+                failed++;
+                if (lookup.CanRetry)
+                {
+                    if (additionalTicketCache.ContainsKey(lookup.RequestedKey)) retained++;
+                }
+                else additionalTicketCache.Remove(lookup.RequestedKey);
+            }
+        }
+        var allIssues = IssueOrdering.Sort(issues.Concat(lookups.Select(lookup => lookup.Issue).OfType<JiraIssue>())
+            .Concat(additionalTicketCache.Values)
+            .DistinctBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase));
         var warning = failed switch
         {
             0 => null,
-            1 => "Could not load one added ticket. Check its key and your Jira access.",
-            _ => $"Could not load {failed} added tickets. Check their keys and your Jira access.",
+            1 => "Could not refresh one added ticket.",
+            _ => $"Could not refresh {failed} added tickets.",
         };
+        if (retained > 0) warning += $" Showing previously loaded details for {retained} added ticket(s).";
         return (allIssues, warning);
     }
 

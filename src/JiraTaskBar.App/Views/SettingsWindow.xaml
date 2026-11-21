@@ -33,6 +33,7 @@
 
                         <TextBlock Text="Jira site" FontWeight="SemiBold" />
                         <ui:TextBox x:Name="SiteBox" Margin="0,4,0,10" PlaceholderText="yourcompany.atlassian.net"
+                                    TextChanged="SiteBox_TextChanged"
                                     ToolTip="The Jira Cloud site to connect to, for example yourcompany.atlassian.net." />
 
                         <TextBlock Text="Email" FontWeight="SemiBold" />
@@ -93,7 +94,7 @@
                     <StackPanel>
                         <Label Content="Additional ticket _keys" Target="{Binding ElementName=AdditionalTicketsBox}"
                                Padding="0" FontWeight="SemiBold" />
-                        <TextBlock Text="Enter keys such as ABC-123, one per line or separated by commas. Remove a key to stop adding that ticket."
+                        <TextBlock Text="Choose a site in Jira connection, then enter its ticket keys, one per line or separated by commas. Remove a key to stop adding that ticket."
                                    TextWrapping="Wrap" Opacity="0.75" Margin="0,4,0,0" />
                         <ui:TextBox x:Name="AdditionalTicketsBox" Margin="0,8,0,0" AcceptsReturn="True" MinLines="4" MaxLines="12"
                                     VerticalScrollBarVisibility="Auto" FontFamily="Consolas"
