@@ -331,6 +331,50 @@ public class WorklogCalendarLayoutTests
     }
 
     [Fact]
+    public void Moving_into_a_partial_final_slot_preserves_the_whole_duration_within_working_hours()
+    {
+        var hours = new WorklogCalendarHours(8 * 60 + 15, 10 * 60 + 45);
+        var day = new DateOnly(2026, 11, 18);
+
+        var moved = hours.FindMoveStart(day, requestedSlot: 21, durationSeconds: 30 * 60, resolution: 30, TimeZoneInfo.Utc);
+
+        Assert.Equal(new DateTimeOffset(2026, 11, 18, 10, 0, 0, TimeSpan.Zero), moved);
+        Assert.Equal(new DateTimeOffset(2026, 11, 18, 8, 15, 0, TimeSpan.Zero),
+            hours.FindMoveStart(day, requestedSlot: 16, durationSeconds: 30 * 60, resolution: 30, TimeZoneInfo.Utc));
+        Assert.Null(hours.FindMoveStart(day, requestedSlot: 21, durationSeconds: 151 * 60, resolution: 30, TimeZoneInfo.Utc));
+    }
+
+    [Fact]
+    public void Work_hours_inside_a_repeated_hour_include_both_occurrences_without_the_gap()
+    {
+        var hours = new WorklogCalendarHours(60, 90);
+        var intervals = hours.IntervalsForDay(new DateOnly(2026, 11, 1), DstZone());
+
+        Assert.Collection(intervals,
+            first =>
+            {
+                Assert.Equal(new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero), first.Start);
+                Assert.Equal(new DateTimeOffset(2026, 11, 1, 0, 30, 0, TimeSpan.Zero), first.End);
+            },
+            second =>
+            {
+                Assert.Equal(new DateTimeOffset(2026, 11, 1, 1, 0, 0, TimeSpan.Zero), second.Start);
+                Assert.Equal(new DateTimeOffset(2026, 11, 1, 1, 30, 0, TimeSpan.Zero), second.End);
+            });
+    }
+
+    [Fact]
+    public void Work_hours_across_a_skipped_hour_keep_the_contiguous_elapsed_time()
+    {
+        var date = new DateOnly(2026, 3, 1);
+        var zone = DstZone();
+        Assert.Empty(new WorklogCalendarHours(120, 150).IntervalsForDay(date, zone));
+
+        var interval = Assert.Single(new WorklogCalendarHours(90, 210).IntervalsForDay(date, zone));
+        Assert.Equal(TimeSpan.FromHours(1), interval.End - interval.Start);
+    }
+
+    [Fact]
     public void Overlapping_entries_are_assigned_to_separate_lanes()
     {
         var lanes = WorklogCalendarLayout.AssignOverlapLanes([(18, 20), (18, 19), (20, 21)]);

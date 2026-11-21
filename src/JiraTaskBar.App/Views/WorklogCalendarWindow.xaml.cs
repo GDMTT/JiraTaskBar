@@ -522,24 +522,11 @@ public partial class WorklogCalendarWindow
             var visibleEntries = entries[date];
             if (_timeHours != WorklogCalendarHours.AllDay)
             {
-                var start = WorklogCalendarHours.Boundary(date, _timeHours.StartMinute, TimeZoneInfo.Local);
-                var end = WorklogCalendarHours.Boundary(date, _timeHours.EndMinute, TimeZoneInfo.Local);
-                visibleEntries = visibleEntries.Select(entry => ClipEntry(entry, start, end)).OfType<CalendarEntry>();
+                var intervals = _timeHours.IntervalsForDay(date, TimeZoneInfo.Local);
+                visibleEntries = visibleEntries.SelectMany(entry => intervals
+                    .Select(interval => ClipEntry(entry, interval.Start, interval.End)).OfType<CalendarEntry>());
             }
-            var dayEntries = visibleEntries
-                .Select(entry =>
-                {
-                    var absoluteSlot = WorklogCalendarLayout.SlotIndex(
-                        TimeOnly.FromDateTime(entry.Started.DateTime), _resolutionMinutes);
-                    var startSlot = absoluteSlot - firstSlot;
-                    var span = WorklogCalendarLayout.DisplaySlotSpan(entry.Started, entry.Seconds, _resolutionMinutes, TimeZoneInfo.Local);
-                    if (_timeHours != WorklogCalendarHours.AllDay)
-                    {
-                        var endMinute = entry.Ended.Date == entry.Started.Date ? entry.Ended.TimeOfDay.TotalMinutes : 24 * 60;
-                        span = Math.Max(span, (int)Math.Ceiling(endMinute / _resolutionMinutes) - absoluteSlot);
-                    }
-                    return new RenderedEntry(entry, startSlot, Math.Clamp(span, 1, slots - startSlot));
-                }).ToList();
+            var dayEntries = visibleEntries.Select(RenderEntry).ToList();
             var lanes = WorklogCalendarLayout.AssignOverlapLanes(dayEntries
                 .Select(item => (item.StartSlot, item.StartSlot + item.Span)).ToList());
             renderedDays.Add((dayEntries, lanes));
@@ -625,6 +612,20 @@ public partial class WorklogCalendarWindow
     private int FirstTimeSlot => _timeHours.FirstSlot(_resolutionMinutes);
 
     private int TimeSlotCount => _timeHours.EndSlot(_resolutionMinutes) - FirstTimeSlot;
+
+    private RenderedEntry RenderEntry(CalendarEntry entry)
+    {
+        var absoluteSlot = WorklogCalendarLayout.SlotIndex(TimeOnly.FromDateTime(entry.Started.DateTime), _resolutionMinutes);
+        var startSlot = absoluteSlot - FirstTimeSlot;
+        var span = WorklogCalendarLayout.DisplaySlotSpan(entry.Started, entry.Seconds, _resolutionMinutes, TimeZoneInfo.Local);
+        if (_timeHours != WorklogCalendarHours.AllDay)
+        {
+            var end = entry.Ended;
+            var endMinute = end.Date == entry.Started.Date ? end.TimeOfDay.TotalMinutes : 24 * 60;
+            span = Math.Max(span, (int)Math.Ceiling(endMinute / _resolutionMinutes) - absoluteSlot);
+        }
+        return new RenderedEntry(entry, startSlot, Math.Clamp(span, 1, TimeSlotCount - startSlot));
+    }
 
     private GridLength TimeRowHeight(int slot) => new(
         (_timeHours.EndOfSlot(slot, _resolutionMinutes) - _timeHours.StartOfSlot(slot, _resolutionMinutes)) *
@@ -806,24 +807,46 @@ public partial class WorklogCalendarWindow
             Math.Abs(position.Y - edit.PointerStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
         edit.Dragged = true;
         var host = (Grid)edit.Block.Parent;
-        var slots = TimeSlotCount;
         if (edit.Mode == EditMode.Move)
-        {
-            var start = Math.Clamp(slot.Slot - edit.GrabOffset, 0, Math.Max(0, slots - edit.OriginalSpan));
-            var day = Array.IndexOf(_timeDays, slot.Date);
-            if (edit.CurrentDay != day)
-            {
-                Grid.SetColumn(host, day);
-                edit.CurrentDay = day;
-            }
-            Grid.SetRow(host, start);
-        }
+            PreviewWorklogMove(edit, slot, host);
         else
         {
-            var span = Math.Clamp(slot.Slot - edit.OriginalSlot + 1, 1, slots - edit.OriginalSlot);
+            var span = Math.Clamp(slot.Slot - edit.OriginalSlot + 1, 1, TimeSlotCount - edit.OriginalSlot);
             Grid.SetRowSpan(host, span);
         }
         e.Handled = true;
+    }
+
+    private void PreviewWorklogMove(CalendarEdit edit, TimeSlot slot, Grid host)
+    {
+        var day = Array.IndexOf(_timeDays, slot.Date);
+        var row = Math.Max(0, slot.Slot - edit.GrabOffset);
+        var span = edit.OriginalSpan;
+        if (_timeHours == WorklogCalendarHours.AllDay)
+        {
+            row = Math.Min(row, Math.Max(0, TimeSlotCount - span));
+            edit.MoveStarted = WorklogCalendarHours.Boundary(slot.Date, row * _resolutionMinutes, TimeZoneInfo.Local);
+        }
+        else
+        {
+            edit.MoveStarted = _timeHours.FindMoveStart(slot.Date, FirstTimeSlot + row, edit.Entry.Seconds,
+                _resolutionMinutes, TimeZoneInfo.Local);
+            if (edit.MoveStarted is { } started)
+            {
+                var preview = RenderEntry(edit.Entry with { Started = started });
+                row = preview.StartSlot;
+                span = preview.Span;
+            }
+            else
+            {
+                day = edit.OriginalDay;
+                row = edit.OriginalSlot;
+            }
+        }
+        edit.CurrentDay = day;
+        Grid.SetColumn(host, day);
+        Grid.SetRow(host, row);
+        Grid.SetRowSpan(host, span);
     }
 
     private async void Worklog_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -850,10 +873,7 @@ public partial class WorklogCalendarWindow
         }
 
         var date = _timeDays[day];
-        var minute = _timeHours.StartOfSlot(FirstTimeSlot + slot, _resolutionMinutes);
-        var started = edit.Mode == EditMode.Resize
-            ? edit.Entry.Started
-            : WorklogCalendarHours.Boundary(date, minute, TimeZoneInfo.Local);
+        var started = edit.MoveStarted ?? edit.Entry.Started;
         var seconds = edit.Mode == EditMode.Move
             ? edit.Entry.Seconds
             : ResizeSeconds(edit.Entry.Started, date, FirstTimeSlot + slot + span - 1);
@@ -1098,7 +1118,7 @@ public partial class WorklogCalendarWindow
         var end = entryEnd < until ? entryEnd : until;
         if (end <= start) return null;
         if (start == entry.Started && end == entryEnd) return entry;
-        return entry with { Started = start, Seconds = (int)(end - start).TotalSeconds, Segment = true };
+        return entry with { Started = start.ToLocalTime(), Seconds = (int)(end - start).TotalSeconds, Segment = true };
     }
 
     private void UpdateWorklogColors(IReadOnlyList<JiraIssue> tickets, IEnumerable<WorklogTypeColor> rules)
@@ -1217,6 +1237,7 @@ public partial class WorklogCalendarWindow
         public Point PointerStart { get; } = pointerStart;
         public bool Dragged { get; set; }
         public int CurrentDay { get; set; } = originalDay;
+        public DateTimeOffset? MoveStarted { get; set; }
     }
 
     public const string TicketDragFormat = "JiraTaskBar.TicketKey";

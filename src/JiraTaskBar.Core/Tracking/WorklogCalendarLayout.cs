@@ -25,6 +25,79 @@ public readonly record struct WorklogCalendarHours(int StartMinute, int EndMinut
     public static DateTimeOffset Boundary(DateOnly date, int minute, TimeZoneInfo zone) =>
         WorklogCalendarLayout.LocalDateTime(date.AddDays(minute / (24 * 60)),
             TimeOnly.MinValue.AddMinutes(minute % (24 * 60)), zone);
+
+    public IReadOnlyList<(DateTimeOffset Start, DateTimeOffset End)> IntervalsForDay(DateOnly date, TimeZoneInfo zone)
+    {
+        var midnight = date.ToDateTime(TimeOnly.MinValue);
+        var localStart = midnight.AddMinutes(StartMinute);
+        var localEnd = midnight.AddMinutes(EndMinute);
+        var dayStart = Boundary(date, 0, zone);
+        var dayEnd = Boundary(date, 24 * 60, zone);
+        var startOffset = zone.GetUtcOffset(dayStart);
+        var endOffset = zone.GetUtcOffset(dayEnd.AddTicks(-1));
+        var intervals = new List<(DateTimeOffset Start, DateTimeOffset End)>(2);
+
+        if (startOffset == endOffset)
+            AddInterval(dayStart, dayEnd, startOffset);
+        else
+        {
+            // Intersect the wall-clock hours with each side of the clock change.
+            // In a repeated hour these intersections may be separate intervals.
+            var transition = FindOffsetChange(dayStart, dayEnd, startOffset, zone);
+            AddInterval(dayStart, transition, startOffset);
+            AddInterval(transition, dayEnd, endOffset);
+        }
+        return intervals;
+
+        void AddInterval(DateTimeOffset from, DateTimeOffset until, TimeSpan offset)
+        {
+            var start = new DateTimeOffset(localStart, offset);
+            var end = new DateTimeOffset(localEnd, offset);
+            if (start < from) start = from;
+            if (end > until) end = until;
+            if (start >= end) return;
+            if (intervals.Count > 0 && intervals[^1].End == start)
+                intervals[^1] = (intervals[^1].Start, end);
+            else intervals.Add((start, end));
+        }
+    }
+
+    public DateTimeOffset? FindMoveStart(DateOnly date, int requestedSlot, int durationSeconds, int resolution,
+        TimeZoneInfo zone)
+    {
+        var intervals = IntervalsForDay(date, zone);
+        if (!intervals.Any(interval => (interval.End - interval.Start).TotalSeconds >= durationSeconds)) return null;
+        var midnight = date.ToDateTime(TimeOnly.MinValue);
+        var lastCandidate = Math.Min(requestedSlot, EndSlot(resolution) - 1);
+        for (var slot = lastCandidate; slot >= FirstSlot(resolution); slot--)
+        {
+            var local = midnight.AddMinutes(StartOfSlot(slot, resolution));
+            if (zone.IsInvalidTime(local)) continue;
+            IEnumerable<TimeSpan> offsets = zone.IsAmbiguousTime(local)
+                ? zone.GetAmbiguousTimeOffsets(local).OrderDescending() : [zone.GetUtcOffset(local)];
+            foreach (var offset in offsets)
+            {
+                var start = new DateTimeOffset(local, offset);
+                var end = start.AddSeconds(durationSeconds);
+                if (intervals.Any(interval => start >= interval.Start && end <= interval.End)) return start;
+            }
+        }
+        return null;
+    }
+
+    private static DateTimeOffset FindOffsetChange(DateTimeOffset start, DateTimeOffset end, TimeSpan offset,
+        TimeZoneInfo zone)
+    {
+        var low = start.UtcTicks;
+        var high = end.UtcTicks;
+        while (high - low > 1)
+        {
+            var middle = low + (high - low) / 2;
+            if (zone.GetUtcOffset(new DateTimeOffset(middle, TimeSpan.Zero)) == offset) low = middle;
+            else high = middle;
+        }
+        return new DateTimeOffset(high, TimeSpan.Zero);
+    }
 }
 
 /// <summary>Pure date/slot calculations shared by the scheduler UI and its tests.</summary>
