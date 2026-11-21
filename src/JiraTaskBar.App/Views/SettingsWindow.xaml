@@ -23,10 +23,12 @@
                        Text="Connect to Jira Cloud with your Atlassian account email and an API token." />
 
             <TextBlock Text="Jira site" FontWeight="SemiBold" />
-            <ui:TextBox x:Name="SiteBox" Margin="0,4,0,10" PlaceholderText="yourcompany.atlassian.net" />
+            <ui:TextBox x:Name="SiteBox" Margin="0,4,0,10" PlaceholderText="yourcompany.atlassian.net"
+                        ToolTip="The Jira Cloud site to connect to, for example yourcompany.atlassian.net." />
 
             <TextBlock Text="Email" FontWeight="SemiBold" />
-            <ui:TextBox x:Name="EmailBox" Margin="0,4,0,10" PlaceholderText="you@company.com" />
+            <ui:TextBox x:Name="EmailBox" Margin="0,4,0,10" PlaceholderText="you@company.com"
+                        ToolTip="The Atlassian account email that owns the API token." />
 
             <DockPanel>
                 <TextBlock Text="API token" FontWeight="SemiBold" />
@@ -34,7 +36,8 @@
                     <Hyperlink Click="CreateToken_Click">Create an API token…</Hyperlink>
                 </TextBlock>
             </DockPanel>
-            <PasswordBox x:Name="TokenBox" Margin="0,4,0,2" />
+            <PasswordBox x:Name="TokenBox" Margin="0,4,0,2"
+                         ToolTip="Paste a Jira API token. Leave this blank to reuse the token already saved for this site." />
             <TextBlock x:Name="TokenHint" FontSize="11" Opacity="0.65" Margin="0,0,0,6"
                        Text="Stored in Windows Credential Manager. Leave blank to keep the saved token." />
 
@@ -60,6 +63,7 @@
                 </TextBlock>
                 <TextBlock Text="Cloud ID" FontWeight="SemiBold" Margin="0,6,0,0" />
                 <ui:TextBox x:Name="CloudIdBox" Margin="0,4,0,2" FontFamily="Consolas"
+                            ToolTip="The Jira Cloud site ID used to route requests made with a scoped API token."
                             PlaceholderText="Found automatically from the site – or paste it from admin.atlassian.com" />
             </StackPanel>
             <TextBlock x:Name="ClassicWarning" FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap" Foreground="#F5A623"
@@ -67,7 +71,7 @@
 
             <TextBlock Text="Tickets to show (JQL)" FontWeight="SemiBold" />
             <ui:TextBox x:Name="JqlBox" Margin="0,4,0,2" AcceptsReturn="True" TextWrapping="Wrap" MinLines="2"
-                        FontFamily="Consolas" />
+                        FontFamily="Consolas" ToolTip="The Jira Query Language filter that selects which tickets appear on the bar." />
             <TextBlock FontSize="11" Opacity="0.65" Margin="0,0,0,10" TextWrapping="Wrap"
                        Text="Buttons are always ordered by priority (highest first), then by key." />
 
@@ -79,7 +83,8 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="Refresh every (minutes)" FontWeight="SemiBold" />
-                    <ui:NumberBox x:Name="RefreshBox" Margin="0,4,0,0" Minimum="1" Maximum="120" SmallChange="1" MaxDecimalPlaces="0" />
+                    <ui:NumberBox x:Name="RefreshBox" Margin="0,4,0,0" Minimum="1" Maximum="120" SmallChange="1" MaxDecimalPlaces="0"
+                                  ToolTip="How often the bar refreshes ticket information from Jira." />
                 </StackPanel>
                 <StackPanel Grid.Column="2">
                     <TextBlock Text="Ask about time away after (minutes)" FontWeight="SemiBold" />
@@ -89,7 +94,8 @@
             </Grid>
 
             <TextBlock Text="Sessions shorter than one minute" FontWeight="SemiBold" />
-            <ComboBox x:Name="ShortSessionBox" Margin="0,4,0,10">
+            <ComboBox x:Name="ShortSessionBox" Margin="0,4,0,10"
+                      ToolTip="Choose whether to skip sessions shorter than one minute or round them up to one minute in Jira.">
                 <ComboBoxItem Content="Log as 1 minute" />
                 <ComboBoxItem Content="Don't log" />
             </ComboBox>
@@ -102,6 +108,31 @@
             <ComboBox x:Name="CalendarFirstDayBox" Margin="0,4,0,10"
                       ToolTip="Sets the first day shown in the weekly calendar and used for weekly totals." />
 
+            <TextBlock Text="Working days" FontWeight="SemiBold" />
+            <WrapPanel x:Name="WorkdaysPanel" Margin="0,4,0,4" />
+            <CheckBox x:Name="OnlyWorkdaysBox" Content="Show only working days" Margin="0,0,0,10"
+                      ToolTip="Hide other days in the calendar. Week and month totals still include all logged time in the period." />
+
+            <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="16" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <Label Content="Workday _start (HH:mm)" Target="{Binding ElementName=WorkStartBox}" Padding="0" FontWeight="SemiBold" />
+                    <TextBox x:Name="WorkStartBox" Margin="0,4,0,0" MaxLength="5"
+                             ToolTip="The local time when the workday starts, for example 09:00." />
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <Label Content="Workday _end (HH:mm)" Target="{Binding ElementName=WorkEndBox}" Padding="0" FontWeight="SemiBold" />
+                    <TextBox x:Name="WorkEndBox" Margin="0,4,0,0" MaxLength="5"
+                             ToolTip="The local time when the workday ends. Enter 24:00 to end at midnight." />
+                </StackPanel>
+            </Grid>
+            <CheckBox x:Name="OnlyWorkHoursBox" Content="Show only working hours in Day and Week" Margin="0,0,0,10"
+                      ToolTip="Hide hours outside your workday in Day and Week. Totals still include time logged outside the displayed hours." />
+
             <TextBlock Text="Daily worklog target in minutes (optional)" FontWeight="SemiBold" />
             <ui:NumberBox x:Name="DailyTargetBox" Margin="0,4,0,10" Minimum="0" Maximum="1440"
                           SmallChange="15" MaxDecimalPlaces="0" ToolTip="Leave empty or enter zero to turn off the target." />
@@ -110,9 +141,11 @@
             <TextBlock Margin="0,4,0,0" Text="Enter one rule per line, for example IT / Incident = #3866A8."
                        TextWrapping="Wrap" Opacity="0.75" />
             <TextBox x:Name="WorklogColorsBox" Margin="0,4,0,10" AcceptsReturn="True" MinLines="2"
-                     MaxLines="5" VerticalScrollBarVisibility="Auto" />
+                     MaxLines="5" VerticalScrollBarVisibility="Auto"
+                     ToolTip="Set a calendar worklog color for each project and issue type you list." />
 
-            <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,8" />
+            <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,8"
+                             ToolTip="Launch Jira TaskBar when you sign in to Windows." />
             <ui:ToggleSwitch x:Name="HideFromCaptureSwitch" Margin="0,0,0,8"
                              Content="Hide the bar from screen sharing and recordings"
                              ToolTip="You still see the bar; Teams, Zoom, screenshots and recordings don't. Ticket titles and tooltips stay private during calls." />

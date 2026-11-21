@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net.Http;
 using System.Windows;
+using CheckBox = System.Windows.Controls.CheckBox;
 using JiraTaskBar.App.Services;
 using JiraTaskBar.Core.Jira;
 using JiraTaskBar.Core.Storage;
@@ -45,6 +46,24 @@ public partial class SettingsWindow : FluentWindow
         CalendarFirstDayBox.ItemsSource = new[] { "Use Windows regional settings" }.Concat(dayNames);
         CalendarFirstDayBox.SelectedIndex = current.CalendarFirstDayOfWeek is { } day && Enum.IsDefined(day)
             ? (int)day + 1 : 0;
+        var workdays = WorklogCalendarLayout.Workdays(current.CalendarWorkdays);
+        foreach (var weekday in Enum.GetValues<DayOfWeek>())
+        {
+            var name = dayNames[(int)weekday];
+            WorkdaysPanel.Children.Add(new CheckBox
+            {
+                Content = name,
+                Tag = weekday,
+                IsChecked = workdays.Contains(weekday),
+                ToolTip = $"Include {name} in your working week.",
+                Margin = new Thickness(0, 0, 12, 4),
+            });
+        }
+        var hours = WorklogCalendarHours.FromSettings(current.CalendarWorkStartMinute, current.CalendarWorkEndMinute);
+        WorkStartBox.Text = FormatWorkTime(hours.StartMinute);
+        WorkEndBox.Text = FormatWorkTime(hours.EndMinute);
+        OnlyWorkdaysBox.IsChecked = current.ShowOnlyCalendarWorkdays;
+        OnlyWorkHoursBox.IsChecked = current.ShowOnlyCalendarWorkHours;
         DailyTargetBox.Value = current.DailyWorklogTargetMinutes;
         WorklogColorsBox.Text = string.Join(Environment.NewLine,
             (current.WorklogTypeColors ?? []).Select(rule => $"{rule.Project} / {rule.IssueType} = {rule.Color}"));
@@ -96,6 +115,19 @@ public partial class SettingsWindow : FluentWindow
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        var workdays = WorkdaysPanel.Children.OfType<CheckBox>().Where(box => box.IsChecked == true)
+            .Select(box => (DayOfWeek)box.Tag).ToArray();
+        if (workdays.Length == 0)
+        {
+            ShowStatus(InfoBarSeverity.Error, "Choose at least one working day.");
+            return;
+        }
+        if (!TryReadWorkTime(WorkStartBox.Text, out var start) || !TryReadWorkTime(WorkEndBox.Text, out var end) ||
+            !WorklogCalendarHours.IsValid(start, end))
+        {
+            ShowStatus(InfoBarSeverity.Error, "Enter working hours as HH:mm with the end after the start. Use 24:00 for midnight at the end of the day.");
+            return;
+        }
         if (!TryReadWorklogColors(out var worklogColors)) return;
         var outcome = await TestAsync();
         // Allow saving while offline, but not with credentials Jira has rejected.
@@ -119,6 +151,11 @@ public partial class SettingsWindow : FluentWindow
                 Math.Max(0, CalendarResolutionBox.SelectedIndex)],
             CalendarFirstDayOfWeek = CalendarFirstDayBox.SelectedIndex > 0
                 ? (DayOfWeek)(CalendarFirstDayBox.SelectedIndex - 1) : null,
+            CalendarWorkdays = workdays,
+            CalendarWorkStartMinute = start,
+            CalendarWorkEndMinute = end,
+            ShowOnlyCalendarWorkdays = OnlyWorkdaysBox.IsChecked == true,
+            ShowOnlyCalendarWorkHours = OnlyWorkHoursBox.IsChecked == true,
             DailyWorklogTargetMinutes = DailyTargetBox.Value is > 0 and <= 1440 and var target ? (int)target : null,
             WorklogTypeColors = worklogColors,
             StartWithWindows = StartupSwitch.IsChecked == true,
@@ -130,6 +167,22 @@ public partial class SettingsWindow : FluentWindow
             FloatTop = Result.FloatTop,
         };
         DialogResult = true;
+    }
+
+    private static string FormatWorkTime(int minute) => FormattableString.Invariant($"{minute / 60:00}:{minute % 60:00}");
+
+    private static bool TryReadWorkTime(string text, out int minute)
+    {
+        text = text.Trim();
+        if (text == "24:00")
+        {
+            minute = 24 * 60;
+            return true;
+        }
+        var valid = TimeOnly.TryParseExact(text, ["H:mm", "HH:mm"], CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var time);
+        minute = time.Hour * 60 + time.Minute;
+        return valid;
     }
 
     private bool TryReadWorklogColors(out List<WorklogTypeColor> colors)

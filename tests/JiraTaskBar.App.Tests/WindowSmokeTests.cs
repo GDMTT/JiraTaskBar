@@ -173,6 +173,7 @@ public class WindowSmokeTests
             AssertCalendarWorklogsStayInDayColumns(issue);
             AssertSyncedOvernightWorklogKeepsItsDaySegment(issue);
             AssertWeeklyTotalsUseDiscoveredWorklogsAndConfiguredStart(issue);
+            AssertCalendarFiltersPreserveFullTotals(issue);
 
             var addWorklog = new AddWorklogWindow([issue], issue, DateTimeOffset.Now,
                 TimeSpan.FromMinutes(30), new NullJiraClient());
@@ -199,6 +200,13 @@ public class WindowSmokeTests
                 message: "Jira rejected the saved API token.");
             settings.Show();
             settings.UpdateLayout();
+            var workdays = (WrapPanel)settings.FindName("WorkdaysPanel");
+            Assert.Equal(7, workdays.Children.Count);
+            Assert.Equal(5, workdays.Children.OfType<CheckBox>().Count(box => box.IsChecked == true));
+            Assert.All(workdays.Children.OfType<CheckBox>(), box => Assert.IsType<string>(box.ToolTip));
+            foreach (var name in new[] { "SiteBox", "EmailBox", "TokenBox", "CloudIdBox", "JqlBox", "RefreshBox",
+                         "ShortSessionBox", "WorkStartBox", "WorkEndBox", "OnlyWorkdaysBox", "OnlyWorkHoursBox", "WorklogColorsBox", "StartupSwitch" })
+                Assert.IsType<string>(((FrameworkElement)settings.FindName(name)).ToolTip);
             settings.Close();
 
             typeof(AppController).GetProperty(nameof(AppController.IsExiting))!.SetValue(controller, true);
@@ -294,6 +302,55 @@ public class WindowSmokeTests
             december.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
                 { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
             Assert.Equal(new DateOnly(2027, 1, 3), client.DiscoveryUntil);
+        }
+        finally { calendar.Close(); }
+    }
+
+    private static void AssertCalendarFiltersPreserveFullTotals(JiraIssue issue)
+    {
+        var sunday = new DateOnly(2026, 11, 15);
+        var tuesday = sunday.AddDays(2);
+        var thursday = sunday.AddDays(4);
+        PendingWorklog Worklog(DateOnly date, int hour, int minutes) => new(Guid.NewGuid(), issue.Key,
+            WorklogCalendarLayout.LocalDateTime(date, new TimeOnly(hour, 0), TimeZoneInfo.Local), minutes * 60, "", 0);
+        PendingWorklog[] logs = [Worklog(tuesday, 8, 45), Worklog(tuesday, 9, 30), Worklog(tuesday, 11, 15),
+            Worklog(sunday.AddDays(3), 12, 60)];
+        var settings = new AppSettings
+        {
+            CalendarFirstDayOfWeek = DayOfWeek.Sunday,
+            CalendarWorkdays = [DayOfWeek.Tuesday, DayOfWeek.Thursday],
+            CalendarWorkStartMinute = 8 * 60 + 15,
+            CalendarWorkEndMinute = 10 * 60 + 45,
+            ShowOnlyCalendarWorkdays = true,
+            ShowOnlyCalendarWorkHours = true,
+        };
+        var calendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => logs, settings: () => settings);
+        typeof(WorklogCalendarWindow).GetField("_anchor", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(calendar, sunday.AddDays(3));
+        try
+        {
+            calendar.Show();
+            calendar.UpdateLayout();
+            Assert.Equal(new[] { tuesday, thursday }, CalendarField<DateOnly[]>(calendar, "_timeDays"));
+            Assert.Equal("Total: 2:30:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+            var grid = CalendarField<Grid>(calendar, "_timeGrid");
+            Assert.Equal(3, grid.ColumnDefinitions.Count);
+            Assert.Equal(7, grid.RowDefinitions.Count);
+            Assert.Equal(18, grid.RowDefinitions[1].Height.Value);
+            Assert.Equal(18, grid.RowDefinitions[^1].Height.Value);
+            Assert.Equal(4, grid.Children.OfType<System.Windows.Shapes.Line>().Count());
+            var overlay = Assert.Single(grid.Children.OfType<Grid>());
+            Assert.Equal(2, overlay.Children.Count);
+            var clipped = Assert.Single(overlay.Children.OfType<Grid>(), host => Grid.GetRow(host) == 0);
+            Assert.Contains("08:15", Assert.IsType<string>(Assert.Single(clipped.Children.OfType<Border>()).ToolTip));
+            Assert.Equal(2, Grid.GetRowSpan(clipped));
+
+            var scheduler = (Grid)calendar.FindName("SchedulerHost");
+            var view = (ComboBox)calendar.FindName("ViewModeBox");
+            view.SelectedIndex = (int)WorklogCalendarView.Month;
+            Assert.Equal(2, Assert.IsType<Grid>(Assert.Single(scheduler.Children.Cast<UIElement>())).ColumnDefinitions.Count);
+            view.SelectedIndex = (int)WorklogCalendarView.Day;
+            Assert.Equal(thursday, Assert.Single(CalendarField<DateOnly[]>(calendar, "_timeDays")));
         }
         finally { calendar.Close(); }
     }
