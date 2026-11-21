@@ -7,6 +7,25 @@ namespace JiraTaskBar.Core.Tests;
 
 public class JiraClientTests
 {
+    [Fact]
+    public async Task QueueCatalogPagesProjectsAndQueuesOnTheConnectedSite()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"start":0,"isLastPage":false,"values":[{"id":"1","projectKey":"OPS"}]}""")
+            .Respond("""{"start":1,"isLastPage":true,"values":[{"id":"2","projectKey":"HELP"}]}""")
+            .Respond("""{"start":0,"isLastPage":false,"values":[{"name":"Waiting","jql":"status = Waiting"}]}""")
+            .Respond("""{"start":1,"isLastPage":true,"values":[{"name":"New","jql":"status = New"}]}""")
+            .Respond("{}", HttpStatusCode.Forbidden);
+
+        var queues = await client.GetQueuesAsync();
+
+        Assert.Collection(queues,
+            queue => Assert.Equal(new JiraQueue("OPS", "New", "status = New"), queue),
+            queue => Assert.Equal(new JiraQueue("OPS", "Waiting", "status = Waiting"), queue));
+        Assert.EndsWith("/servicedesk?start=1&limit=50", handler.Requests[1].PathAndQuery);
+        Assert.EndsWith("/servicedesk/1/queue?start=1&limit=50", handler.Requests[3].PathAndQuery);
+    }
+
     private static (JiraClient Client, FakeHandler Handler) Create()
     {
         var handler = new FakeHandler();
