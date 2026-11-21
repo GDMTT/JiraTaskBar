@@ -83,6 +83,14 @@ public partial class SettingsWindow : FluentWindow
         StartupSwitch.IsChecked = current.StartWithWindows;
         HideFromCaptureSwitch.IsChecked = current.HideFromScreenCapture;
         ShowTitlesSwitch.IsChecked = current.ShowTitlesOnBar;
+        ShowNumbersSwitch.IsChecked = current.ShowTicketNumbersOnBar || !current.ShowTitlesOnBar;
+        ShowPrioritySwitch.IsChecked = current.ShowPriorityIconOnBar;
+        ShowTypeSwitch.IsChecked = current.ShowTypeIconOnBar;
+        TicketGroupBox.SelectedValue = Enum.IsDefined(current.TicketGrouping) ? current.TicketGrouping : TicketGrouping.None;
+        TicketSortBox.SelectedValue = Enum.IsDefined(current.EffectiveTicketSort) ? current.EffectiveTicketSort : TicketSort.Priority;
+        TicketOrderBox.SelectedIndex = current.SortTicketsDescending ? 1 : 0;
+        TicketGroupBox.SelectionChanged += (_, _) => UpdateTicketSortOptions();
+        UpdateTicketSortOptions();
         TokenHint.Visibility = saved is null ? Visibility.Collapsed : Visibility.Visible;
         ForgetSignInButton.Visibility = saved is null ? Visibility.Collapsed : Visibility.Visible;
 
@@ -104,6 +112,14 @@ public partial class SettingsWindow : FluentWindow
     internal bool IsDataCenter => AuthenticationBox.SelectedIndex == 1;
     private bool IsScoped => !IsDataCenter && ScopedRadio.IsChecked == true;
     private Uri ReadSite() => JiraConnection.NormalizeConnectionSite(SiteBox.Text, IsDataCenter);
+
+    private void UpdateTicketSortOptions()
+    {
+        var groupedByPriority = TicketGroupBox.SelectedValue is TicketGrouping.Priority;
+        if (groupedByPriority && TicketSortBox.SelectedValue is TicketSort.Priority)
+            TicketSortBox.SelectedValue = TicketSort.Number;
+        PrioritySortItem.IsEnabled = !groupedByPriority;
+    }
 
     private void SettingsTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -288,6 +304,12 @@ public partial class SettingsWindow : FluentWindow
             StartWithWindows = StartupSwitch.IsChecked == true,
             HideFromScreenCapture = HideFromCaptureSwitch.IsChecked == true,
             ShowTitlesOnBar = ShowTitlesSwitch.IsChecked == true,
+            ShowTicketNumbersOnBar = ShowNumbersSwitch.IsChecked == true || ShowTitlesSwitch.IsChecked != true,
+            ShowPriorityIconOnBar = ShowPrioritySwitch.IsChecked == true,
+            ShowTypeIconOnBar = ShowTypeSwitch.IsChecked == true,
+            TicketGrouping = (TicketGrouping)TicketGroupBox.SelectedValue,
+            TicketSort = (TicketSort)TicketSortBox.SelectedValue,
+            SortTicketsDescending = TicketOrderBox.SelectedIndex == 1,
             Dock = Result.Dock,
             MonitorDevice = Result.MonitorDevice,
             FloatLeft = Result.FloatLeft,

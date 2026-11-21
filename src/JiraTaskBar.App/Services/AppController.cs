@@ -786,11 +786,12 @@ public sealed class AppController : IDisposable
         _contextReportWindow.Show();
     }
 
-    /// <summary>Applies the privacy display options: capture exclusion and titles on buttons.</summary>
+    /// <summary>Applies capture privacy and the ticket layout.</summary>
     private void ApplyDisplaySettings()
     {
         if (_bar is not null) CapturePrivacy.Apply(_bar, Settings.HideFromScreenCapture);
-        Bar.RefreshTitles();
+        _bar?.RefreshDockThickness();
+        Bar.RefreshDisplay();
     }
 
     private void OpenSettings(string? message)

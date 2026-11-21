@@ -3,6 +3,8 @@ using System.Text.Json.Serialization;
 namespace JiraTaskBar.Core.Storage;
 
 public enum DockEdge { Floating, Left, Top, Right, Bottom }
+public enum TicketGrouping { None, Priority, Type, Project }
+public enum TicketSort { Priority, ResolutionSla, Number }
 public sealed record WorklogTypeColor(string Project, string IssueType, string Color);
 
 public enum ShortSessionMode
@@ -50,8 +52,20 @@ public sealed class AppSettings
     /// <summary>Exclude the bar (and its tooltips/menus) from screen sharing, screenshots and recordings.</summary>
     public bool HideFromScreenCapture { get; set; } = true;
 
-    /// <summary>Show ticket summaries on the buttons; when off, only keys show (titles stay in tooltips).</summary>
     public bool ShowTitlesOnBar { get; set; } = true;
+    public bool ShowTicketNumbersOnBar { get; set; } = true;
+    public bool ShowPriorityIconOnBar { get; set; } = true;
+    public bool ShowTypeIconOnBar { get; set; } = true;
+    public TicketGrouping TicketGrouping { get; set; }
+    public TicketSort TicketSort { get; set; }
+    public bool SortTicketsDescending { get; set; }
+
+    [JsonIgnore]
+    public bool HasTicketGrouping => TicketGrouping is TicketGrouping.Priority or TicketGrouping.Type or TicketGrouping.Project;
+
+    [JsonIgnore]
+    public TicketSort EffectiveTicketSort => TicketGrouping == TicketGrouping.Priority && TicketSort == TicketSort.Priority
+        ? TicketSort.Number : TicketSort;
 
     public DockEdge Dock { get; set; } = DockEdge.Floating;
     /// <summary>Device name of the monitor the bar was last docked or floating on (e.g. \\.\DISPLAY1).</summary>
