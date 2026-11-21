@@ -87,7 +87,7 @@ public sealed partial class BarViewModel : ObservableObject
         IsRefreshing = true;
         try
         {
-            var issues = await _app.FetchIssuesAsync();
+            var (issues, warning) = await _app.FetchIssuesAsync();
             if (!ReferenceEquals(_app.Client, client)) return;
             if (ReferenceEquals(_slaOwner, client))
             {
@@ -100,7 +100,7 @@ public sealed partial class BarViewModel : ObservableObject
             _slaOwner = client;
             _lastIssues = issues;
             _app.ReportAuthSuccess();
-            StatusMessage = null;
+            StatusMessage = warning;
             Rebuild();
             await Task.WhenAll(_app.Worklogs.RetryPendingAsync(), LoadSlasAsync(client, issues));
         }

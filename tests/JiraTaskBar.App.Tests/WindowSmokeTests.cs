@@ -195,8 +195,14 @@ public class WindowSmokeTests
             bar.Close();
             Assert.True(bar.IsVisible);
 
-            var settings = new SettingsWindow(new AppSettings(),
-                new StoredCredentials("https://example.atlassian.net/", "a@b.c", "t"), firstRun: false,
+            var settings = new SettingsWindow(new AppSettings
+            {
+                AdditionalTicketKeysBySite = new()
+                {
+                    ["https://example.atlassian.net/"] = ["TEST-1", "TEST-2"],
+                    ["https://other.atlassian.net/"] = ["OTHER-9"],
+                },
+            }, new StoredCredentials("https://example.atlassian.net/", "a@b.c", "t"), firstRun: false,
                 message: "Jira rejected the saved API token.");
             settings.Show();
             settings.UpdateLayout();
@@ -207,14 +213,90 @@ public class WindowSmokeTests
             foreach (var name in new[] { "SiteBox", "EmailBox", "TokenBox", "CloudIdBox", "JqlBox", "RefreshBox",
                          "ShortSessionBox", "WorkStartBox", "WorkEndBox", "OnlyWorkdaysBox", "OnlyWorkHoursBox", "WorklogColorsBox", "StartupSwitch" })
                 Assert.IsType<string>(((FrameworkElement)settings.FindName(name)).ToolTip);
+            var tabs = (TabControl)settings.FindName("SettingsTabs");
+            Assert.Equal(8, tabs.Items.Count);
+            Assert.Same(settings.FindName("JiraTab"), tabs.SelectedItem);
+            var additionalTickets = (TextBox)settings.FindName("AdditionalTicketsBox");
+            Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
+            var siteBox = (TextBox)settings.FindName("SiteBox");
+            siteBox.Text = "other.atlassian.net";
+            Assert.Equal("OTHER-9", additionalTickets.Text);
+            siteBox.Text = "fresh.atlassian.net";
+            Assert.Empty(additionalTickets.Text);
+            siteBox.Text = "example.atlassian.net";
+            Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
+            additionalTickets.Text = "not-a-ticket";
+            typeof(SettingsWindow).GetMethod("Save_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(settings, [settings, new RoutedEventArgs()]);
+            Assert.Same(settings.FindName("AddTicketsTab"), tabs.SelectedItem);
+            Assert.Contains("Enter a Jira ticket key", ((Wpf.Ui.Controls.InfoBar)settings.FindName("Status")).Message);
             settings.Close();
 
+            AssertAddedTicketsJoinTheQueue(controller, bar, issue);
             typeof(AppController).GetProperty(nameof(AppController.IsExiting))!.SetValue(controller, true);
             bar.Close();
             controller.Dispose();
             AssertCalendarClickEditsSavedWorklog(issue);
             app.Shutdown();
         });
+    }
+
+    private static void AssertAddedTicketsJoinTheQueue(AppController controller, BarWindow bar, JiraIssue issue)
+    {
+        const string requestedKey = "OLD-2";
+        var manualIssue = issue with { Key = "TEST-2", Priority = new JiraPriority("1", "Highest", 0) };
+        var client = new NullJiraClient
+        {
+            QueueIssues = [issue],
+            AddedLookups = [new(requestedKey, manualIssue), new("TEST-999", null)],
+        };
+        var clientProperty = typeof(AppController).GetProperty(nameof(AppController.Client))!;
+        var original = controller.Client;
+        clientProperty.SetValue(controller, client);
+        controller.Settings.AdditionalTicketKeysBySite[client.Connection.SiteUrl.AbsoluteUri] =
+            [issue.Key.ToLowerInvariant(), requestedKey, "TEST-999"];
+        try
+        {
+            var (issues, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([requestedKey, "TEST-999"], client.RequestedAddedKeys.Order());
+            Assert.Equal([manualIssue.Key, issue.Key], issues.Select(ticket => ticket.Key));
+            Assert.Contains("one added ticket", warning);
+            controller.Bar.StatusMessage = warning;
+            bar.UpdateLayout();
+            var indicator = (FrameworkElement)bar.FindName("RefreshWarning");
+            Assert.Equal(Visibility.Visible, indicator.Visibility);
+            Assert.Equal(warning, indicator.ToolTip);
+
+            client.AddedLookups = [new(requestedKey, null, CanRetry: true), new("TEST-999", null)];
+            (issues, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([manualIssue.Key, issue.Key], issues.Select(ticket => ticket.Key));
+            Assert.Contains("previously loaded", warning);
+
+            client.AddedLookups = [new(requestedKey, null), new("TEST-999", null)];
+            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal(issue.Key, Assert.Single(issues).Key);
+            client.AddedLookups = [new(requestedKey, manualIssue), new("TEST-999", null)];
+            _ = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+
+            var otherClient = new NullJiraClient
+            {
+                Connection = new(new Uri("https://other.atlassian.net/"), "a@b.c", "other-token"),
+                QueueIssues = [issue],
+            };
+            clientProperty.SetValue(controller, otherClient);
+            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Empty(otherClient.RequestedAddedKeys);
+            Assert.Equal(issue.Key, Assert.Single(issues).Key);
+            controller.Settings.AdditionalTicketKeysBySite[otherClient.Connection.SiteUrl.AbsoluteUri] = [requestedKey];
+            otherClient.AddedLookups = [new(requestedKey, null, CanRetry: true)];
+            (issues, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal(issue.Key, Assert.Single(issues).Key);
+        }
+        finally
+        {
+            controller.Bar.StatusMessage = null;
+            clientProperty.SetValue(controller, original);
+        }
     }
 
     private static void AssertSyncedOvernightWorklogKeepsItsDaySegment(JiraIssue issue)
@@ -679,6 +761,9 @@ public class WindowSmokeTests
 
     private sealed class NullJiraClient : IJiraClient
     {
+        public IReadOnlyList<JiraIssue> QueueIssues { get; init; } = [];
+        public IReadOnlyList<JiraIssueLookup> AddedLookups { get; set; } = [];
+        public IReadOnlyList<string> RequestedAddedKeys { get; private set; } = [];
         public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }
         public IReadOnlyList<JiraIssue> Discovered { get; set; } = [];
         public bool FailDiscovery { get; set; }
@@ -686,7 +771,7 @@ public class WindowSmokeTests
         public JiraWorklog? UpdatedWorklog { get; set; }
         public int UpdatedSeconds { get; private set; }
         public (string IssueKey, string WorklogId, string Text)? AddedWorklogComment { get; private set; }
-        public JiraConnection Connection { get; } = new(new Uri("https://example.atlassian.net/"), "a@b.c", "t");
+        public JiraConnection Connection { get; init; } = new(new Uri("https://example.atlassian.net/"), "a@b.c", "t");
         public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => Task.FromResult(new JiraUser("test-account", "Tester", null));
         public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until, CancellationToken ct = default)
         {
@@ -695,8 +780,13 @@ public class WindowSmokeTests
         }
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
             Task.FromResult(JiraDurationSettings.Default);
-        public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<JiraPriority>>([]);
+        public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => Task.FromResult(QueueIssues);
+        public Task<IReadOnlyList<JiraIssueLookup>> FetchIssuesByKeyAsync(IReadOnlyList<string> keys, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default)
+        {
+            RequestedAddedKeys = keys;
+            return Task.FromResult(AddedLookups);
+        }
         public Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default) => Task.FromResult<JiraSla?>(null);
         public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) =>
             Worklogs is null ? throw new NotSupportedException()

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Windows;
 using CheckBox = System.Windows.Controls.CheckBox;
 using JiraTaskBar.App.Services;
@@ -14,6 +15,9 @@ namespace JiraTaskBar.App.Views;
 public partial class SettingsWindow : FluentWindow
 {
     private readonly StoredCredentials? _saved;
+    private readonly Dictionary<string, string> _additionalTicketDrafts = new(StringComparer.OrdinalIgnoreCase);
+    private string? _additionalTicketSite;
+    private bool _ticketDraftsLoaded;
     /// <summary>The cloud ID confirmed by the last successful test (scoped tokens only).</summary>
     private string? _testedCloudId;
 
@@ -34,6 +38,11 @@ public partial class SettingsWindow : FluentWindow
         (saved is { CloudId: null } ? ClassicRadio : ScopedRadio).IsChecked = true;
 
         JqlBox.Text = current.Jql;
+        foreach (var (site, keys) in current.AdditionalTicketKeysBySite ?? [])
+            _additionalTicketDrafts[site] = string.Join(Environment.NewLine, keys ?? []);
+        AdditionalTicketsBox.IsEnabled = false;
+        _ticketDraftsLoaded = true;
+        UpdateAdditionalTicketSite();
         RefreshBox.Value = current.RefreshMinutes;
         IdleBox.Value = current.IdlePromptMinutes;
         ShortSessionBox.SelectedIndex = current.ShortSessions == ShortSessionMode.RoundUpToMinute ? 0 : 1;
@@ -96,6 +105,29 @@ public partial class SettingsWindow : FluentWindow
         ClassicWarning.Visibility = IsScoped ? Visibility.Collapsed : Visibility.Visible;
     }
 
+    private void SiteBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (!_ticketDraftsLoaded) return;
+        var previous = _additionalTicketSite;
+        UpdateAdditionalTicketSite();
+        if (!string.Equals(previous, _additionalTicketSite, StringComparison.OrdinalIgnoreCase))
+            CloudIdBox.Text = string.Equals(_additionalTicketSite, _saved?.SiteUrl, StringComparison.OrdinalIgnoreCase)
+                ? _saved?.CloudId ?? string.Empty : string.Empty;
+    }
+
+    private void UpdateAdditionalTicketSite()
+    {
+        string? site;
+        try { site = JiraConnection.NormalizeSiteUrl(SiteBox.Text).AbsoluteUri; }
+        catch (ArgumentException) { site = null; }
+        if (string.Equals(_additionalTicketSite, site, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (_additionalTicketSite is { } previous) _additionalTicketDrafts[previous] = AdditionalTicketsBox.Text;
+        _additionalTicketSite = site;
+        AdditionalTicketsBox.IsEnabled = site is not null;
+        AdditionalTicketsBox.Text = site is not null && _additionalTicketDrafts.TryGetValue(site, out var text) ? text : string.Empty;
+    }
+
     /// <summary>
     /// The token to use: a newly typed one, or the saved one if the site is unchanged.
     /// A saved token is never re-pointed at a different site without being re-entered.
@@ -111,29 +143,51 @@ public partial class SettingsWindow : FluentWindow
     private void CreateToken_Click(object sender, RoutedEventArgs e) =>
         Shell.OpenUrl("https://id.atlassian.com/manage-profile/security/api-tokens");
 
-    private async void Test_Click(object sender, RoutedEventArgs e) => await TestAsync();
+    private async void Test_Click(object sender, RoutedEventArgs e)
+    {
+        if (await TestAsync() == TestOutcome.Invalid) SettingsTabs.SelectedItem = JiraTab;
+    }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        var additionalKeys = AdditionalTicketsBox.Text.Split(['\r', '\n', ',', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(key => key.ToUpperInvariant()).Distinct(StringComparer.Ordinal).ToArray();
+        if (additionalKeys.FirstOrDefault(key => !TicketKeyPattern().IsMatch(key)) is { } invalidKey)
+        {
+            SettingsTabs.SelectedItem = AddTicketsTab;
+            ShowStatus(InfoBarSeverity.Error, $"Enter a Jira ticket key like ABC-123. Check the entry {invalidKey}.");
+            return;
+        }
         var workdays = WorkdaysPanel.Children.OfType<CheckBox>().Where(box => box.IsChecked == true)
             .Select(box => (DayOfWeek)box.Tag).ToArray();
         if (workdays.Length == 0)
         {
+            SettingsTabs.SelectedItem = WorkWeekTab;
             ShowStatus(InfoBarSeverity.Error, "Choose at least one working day.");
             return;
         }
         if (!TryReadWorkTime(WorkStartBox.Text, out var start) || !TryReadWorkTime(WorkEndBox.Text, out var end) ||
             !WorklogCalendarHours.IsValid(start, end))
         {
+            SettingsTabs.SelectedItem = WorkWeekTab;
             ShowStatus(InfoBarSeverity.Error, "Enter working hours as HH:mm with the end after the start. Use 24:00 for midnight at the end of the day.");
             return;
         }
-        if (!TryReadWorklogColors(out var worklogColors)) return;
+        if (!TryReadWorklogColors(out var worklogColors))
+        {
+            SettingsTabs.SelectedItem = CalendarTab;
+            return;
+        }
         var outcome = await TestAsync();
         // Allow saving while offline, but not with credentials Jira has rejected.
-        if (outcome == TestOutcome.Invalid) return;
+        if (outcome == TestOutcome.Invalid)
+        {
+            SettingsTabs.SelectedItem = JiraTab;
+            return;
+        }
         if (IsScoped && _testedCloudId is null)
         {
+            SettingsTabs.SelectedItem = JiraTab;
             ShowStatus(InfoBarSeverity.Error, "A scoped token needs the site's cloud ID – paste it from admin.atlassian.com.");
             return;
         }
@@ -141,9 +195,13 @@ public partial class SettingsWindow : FluentWindow
         var site = JiraConnection.NormalizeSiteUrl(SiteBox.Text);
         Credentials = new StoredCredentials(site.ToString(), EmailBox.Text.Trim(), ResolveToken(site)!,
             IsScoped ? _testedCloudId : null);
+        var siteKeys = new Dictionary<string, string[]>(Result.AdditionalTicketKeysBySite ?? [], StringComparer.OrdinalIgnoreCase);
+        if (additionalKeys.Length == 0) siteKeys.Remove(site.AbsoluteUri);
+        else siteKeys[site.AbsoluteUri] = additionalKeys;
         Result = new AppSettings
         {
             Jql = string.IsNullOrWhiteSpace(JqlBox.Text) ? AppSettings.DefaultJql : JqlBox.Text.Trim(),
+            AdditionalTicketKeysBySite = siteKeys,
             RefreshMinutes = (int)Math.Clamp(RefreshBox.Value ?? 5, 1, 120),
             IdlePromptMinutes = (int)Math.Clamp(IdleBox.Value ?? 10, 0, 480),
             ShortSessions = ShortSessionBox.SelectedIndex == 0 ? ShortSessionMode.RoundUpToMinute : ShortSessionMode.Skip,
@@ -170,6 +228,9 @@ public partial class SettingsWindow : FluentWindow
     }
 
     private static string FormatWorkTime(int minute) => FormattableString.Invariant($"{minute / 60:00}:{minute % 60:00}");
+
+    [GeneratedRegex(@"\A[A-Z][A-Z0-9_]*-[0-9]+\z", RegexOptions.CultureInvariant)]
+    private static partial Regex TicketKeyPattern();
 
     private static bool TryReadWorkTime(string text, out int minute)
     {
@@ -240,7 +301,7 @@ public partial class SettingsWindow : FluentWindow
             return TestOutcome.Invalid;
         }
 
-        TestButton.IsEnabled = SaveButton.IsEnabled = false;
+        SettingsTabs.IsEnabled = TestButton.IsEnabled = SaveButton.IsEnabled = false;
         ShowStatus(InfoBarSeverity.Informational, "Connecting…");
         try
         {
@@ -282,7 +343,7 @@ public partial class SettingsWindow : FluentWindow
         }
         finally
         {
-            TestButton.IsEnabled = SaveButton.IsEnabled = true;
+            SettingsTabs.IsEnabled = TestButton.IsEnabled = SaveButton.IsEnabled = true;
         }
     }
 

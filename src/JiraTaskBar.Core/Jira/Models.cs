@@ -25,6 +25,8 @@ public sealed record JiraIssue(
 
 public sealed record JiraUser(string AccountId, string DisplayName, string? EmailAddress);
 
+public sealed record JiraIssueLookup(string RequestedKey, JiraIssue? Issue, bool CanRetry = false);
+
 public sealed record JiraWorklog(
     string Id,
     string IssueKey,

@@ -80,6 +80,37 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Added_ticket_lookup_associates_a_moved_issue_with_its_requested_key()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"key":"ABC-2","fields":{"summary":"Outside the queue","priority":{"id":"4"}}}""");
+
+        var result = Assert.Single(await client.FetchIssuesByKeyAsync(["OLD-2", "old-2"],
+            [new JiraPriority("4", "Medium", 2)]));
+
+        Assert.Equal("OLD-2", result.RequestedKey);
+        Assert.Equal("ABC-2", result.Issue!.Key);
+        Assert.Equal(2, result.Issue.PriorityRank);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.StartsWith("/rest/api/3/issue/OLD-2?fields=", request.PathAndQuery);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, false)]
+    [InlineData(HttpStatusCode.Forbidden, false)]
+    [InlineData(HttpStatusCode.BadGateway, true)]
+    [InlineData(HttpStatusCode.RequestTimeout, true)]
+    public async Task Added_ticket_lookup_distinguishes_missing_issues_from_retryable_failures(HttpStatusCode status, bool canRetry)
+    {
+        var (client, handler) = Create();
+        handler.Respond("{}", status);
+
+        Assert.Equal(new JiraIssueLookup("ABC-2", null, canRetry),
+            Assert.Single(await client.FetchIssuesByKeyAsync(["ABC-2"], [])));
+    }
+
+    [Fact]
     public async Task Worklog_issue_search_includes_older_starts_and_reads_past_the_queue_limit()
     {
         var (client, handler) = Create();

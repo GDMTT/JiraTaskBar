@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace JiraTaskBar.Core.Jira;
@@ -11,6 +12,8 @@ public interface IJiraClient
     Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
+    Task<IReadOnlyList<JiraIssueLookup>> FetchIssuesByKeyAsync(IReadOnlyList<string> keys,
+        IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until, CancellationToken ct = default);
     Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
@@ -135,6 +138,35 @@ public sealed class JiraClient : IJiraClient
 
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
         SearchIssuesAsync(jql, priorities, MaxIssues, ct);
+
+    public async Task<IReadOnlyList<JiraIssueLookup>> FetchIssuesByKeyAsync(IReadOnlyList<string> keys,
+        IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default)
+    {
+        var byId = priorities.ToDictionary(priority => priority.Id);
+        var requested = keys.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var results = new JiraIssueLookup[requested.Length];
+        var options = new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct };
+        await Parallel.ForEachAsync(Enumerable.Range(0, requested.Length), options, async (index, token) =>
+        {
+            var key = requested[index];
+            try
+            {
+                var response = await SendAsync(HttpMethod.Get, $"rest/api/3/issue/{Uri.EscapeDataString(key)}?fields={SearchFields}", null, token);
+                var issue = response is JsonObject ? JiraPayloads.ParseIssue(response, byId) : null;
+                results[index] = string.IsNullOrWhiteSpace(issue?.Key) ? new(key, null, CanRetry: true) : new(key, issue);
+            }
+            catch (JiraApiException ex) when (ex.StatusCode is 400 or 403 or 404 or 410)
+            {
+                results[index] = new(key, null);
+            }
+            catch (Exception ex) when (ex is JiraApiException { StatusCode: not 401 } or HttpRequestException or JsonException ||
+                                       ex is OperationCanceledException && !token.IsCancellationRequested)
+            {
+                results[index] = new(key, null, CanRetry: true);
+            }
+        });
+        return results;
+    }
 
     public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until,
         CancellationToken ct = default)
