@@ -230,7 +230,35 @@ public class WindowSmokeTests
                 .Invoke(settings, [settings, new RoutedEventArgs()]);
             Assert.Same(settings.FindName("AddTicketsTab"), tabs.SelectedItem);
             Assert.Contains("Enter a Jira ticket key", ((Wpf.Ui.Controls.InfoBar)settings.FindName("Status")).Message);
+
+            settings.Width = settings.MinWidth;
+            settings.UpdateLayout();
+            var headers = Assert.IsType<ScrollViewer>(tabs.Template.FindName("SettingsTabHeaders", tabs));
+            var windowsTab = (TabItem)settings.FindName("WindowsTab");
+            Assert.True(headers.ScrollableWidth > 0);
+            headers.ScrollToRightEnd();
+            settings.UpdateLayout();
+            Assert.Equal(headers.ScrollableWidth, headers.HorizontalOffset);
+            AssertHeaderVisible(windowsTab);
+            tabs.SelectedItem = windowsTab;
+            settings.UpdateLayout();
+            Assert.True(((FrameworkElement)settings.FindName("StartupSwitch")).IsVisible);
+            Assert.True(jiraTab.TranslatePoint(new Point(), headers).X < 0);
+
+            ((TextBox)settings.FindName("EmailBox")).Clear();
+            Keyboard.ClearFocus();
+            ((ButtonBase)settings.FindName("TestButton")).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            settings.UpdateLayout();
+            Assert.Same(jiraTab, tabs.SelectedItem);
+            AssertHeaderVisible(jiraTab);
             settings.Close();
+
+            void AssertHeaderVisible(TabItem tab)
+            {
+                var left = tab.TranslatePoint(new Point(), headers).X;
+                Assert.InRange(left, -1, headers.ViewportWidth - tab.ActualWidth + 1);
+            }
+
             const string dataCenterSite = "https://jira.example.org/jira/";
             const string alternateContext = "https://jira.example.org/Jira/";
             var siteSettings = new AppSettings();

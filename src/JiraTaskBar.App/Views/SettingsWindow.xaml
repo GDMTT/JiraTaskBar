@@ -24,7 +24,7 @@
         <ui:TitleBar Title="Jira TaskBar – Settings" ShowMaximize="False" ShowMinimize="False" />
 
         <TabControl x:Name="SettingsTabs" Grid.Row="1" Margin="16,8,16,8" TabStripPlacement="Top"
-                    AutomationProperties.Name="Settings categories">
+                    AutomationProperties.Name="Settings categories" SelectionChanged="SettingsTabs_SelectionChanged">
             <TabControl.Template>
                 <ControlTemplate TargetType="TabControl">
                     <Grid KeyboardNavigation.TabNavigation="Local">
@@ -32,7 +32,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                        <ScrollViewer x:Name="SettingsTabHeaders" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
                                       Focusable="False" KeyboardNavigation.TabIndex="1">
                             <TabPanel IsItemsHost="True" />
                         </ScrollViewer>
