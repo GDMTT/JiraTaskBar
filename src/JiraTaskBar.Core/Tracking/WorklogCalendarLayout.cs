@@ -7,10 +7,38 @@ public sealed record WorklogCalendarRange(DateOnly Start, DateOnly EndExclusive)
     public int DayCount => EndExclusive.DayNumber - Start.DayNumber;
 }
 
+public readonly record struct WorklogCalendarHours(int StartMinute, int EndMinute)
+{
+    public static WorklogCalendarHours AllDay => new(0, 24 * 60);
+
+    public static bool IsValid(int start, int end) => start >= 0 && start < end && end <= 24 * 60;
+
+    public static WorklogCalendarHours FromSettings(int? start, int? end) =>
+        start is { } first && end is { } last && IsValid(first, last) ? new(first, last) : new(9 * 60, 17 * 60);
+
+    public int FirstSlot(int resolution) => StartMinute / resolution;
+    public int EndSlot(int resolution) => (EndMinute + resolution - 1) / resolution;
+    public int StartOfSlot(int slot, int resolution) => Math.Max(slot * resolution, StartMinute);
+    public int EndOfSlot(int slot, int resolution) => Math.Min((slot + 1) * resolution, EndMinute);
+    public bool Contains(double minute) => minute >= StartMinute && minute < EndMinute;
+
+    public static DateTimeOffset Boundary(DateOnly date, int minute, TimeZoneInfo zone) =>
+        WorklogCalendarLayout.LocalDateTime(date.AddDays(minute / (24 * 60)),
+            TimeOnly.MinValue.AddMinutes(minute % (24 * 60)), zone);
+}
+
 /// <summary>Pure date/slot calculations shared by the scheduler UI and its tests.</summary>
 public static class WorklogCalendarLayout
 {
     public static readonly int[] SupportedResolutions = [5, 10, 15, 30, 60];
+    private static readonly IReadOnlySet<DayOfWeek> DefaultWorkdays = new HashSet<DayOfWeek>
+        { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday };
+
+    public static IReadOnlySet<DayOfWeek> Workdays(IEnumerable<DayOfWeek>? configured)
+    {
+        var days = configured?.Where(Enum.IsDefined).ToHashSet();
+        return days is { Count: > 0 } ? days : DefaultWorkdays;
+    }
 
     public static int NormalizeResolution(int minutes) =>
         SupportedResolutions.Contains(minutes) ? minutes : 30;

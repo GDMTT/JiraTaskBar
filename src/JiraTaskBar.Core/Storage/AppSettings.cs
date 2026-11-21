@@ -37,6 +37,11 @@ public sealed class AppSettings
     /// <summary>Minute interval used to divide and snap the Day/Week worklog calendar.</summary>
     public int CalendarResolutionMinutes { get; set; } = 30;
     public DayOfWeek? CalendarFirstDayOfWeek { get; set; }
+    public DayOfWeek[]? CalendarWorkdays { get; set; }
+    public int CalendarWorkStartMinute { get; set; } = 9 * 60;
+    public int CalendarWorkEndMinute { get; set; } = 17 * 60;
+    public bool ShowOnlyCalendarWorkdays { get; set; }
+    public bool ShowOnlyCalendarWorkHours { get; set; }
     public int? DailyWorklogTargetMinutes { get; set; }
     public List<WorklogTypeColor> WorklogTypeColors { get; set; } = [];
     public bool StartWithWindows { get; set; }
