@@ -15,7 +15,8 @@ namespace JiraTaskBar.App.Views;
 public partial class BarWindow : Window
 {
     public const double VerticalThickness = 148;
-    public const double HorizontalThickness = 52;
+    private const double HorizontalThickness = 52;
+    private const double GroupHeaderHeight = 20;
     private const double HorizontalButtonWidth = 136;
     private const double SnapDistanceDip = 24;
     private const double UndockDragDistanceDip = 12;
@@ -53,6 +54,12 @@ public partial class BarWindow : Window
     }
 
     public DockEdge DockEdge => _appBar.Edge;
+    private double HorizontalBarHeight => HorizontalThickness + (_app.Settings.HasTicketGrouping ? GroupHeaderHeight : 0);
+
+    internal void RefreshDockThickness()
+    {
+        if (DockEdge is DockEdge.Top or DockEdge.Bottom) _appBar.Resize(HorizontalBarHeight);
+    }
 
     private void Filter_Click(object sender, RoutedEventArgs e)
     {
@@ -81,7 +88,7 @@ public partial class BarWindow : Window
         SizeToContent = SizeToContent.Manual;
         MaxHeight = double.PositiveInfinity;
         SetRoundedCorners(false);
-        _appBar.Dock(edge, monitor.Handle, horizontal ? HorizontalThickness : VerticalThickness);
+        _appBar.Dock(edge, monitor.Handle, horizontal ? HorizontalBarHeight : VerticalThickness);
     }
 
     /// <summary>Moves a floating bar to a physical-pixel position, keeping it on screen.</summary>
@@ -277,7 +284,7 @@ public partial class BarWindow : Window
         {
             _snapEdge = nearest.Edge;
             _snapMonitor = monitor;
-            var thickness = nearest.Edge is DockEdge.Top or DockEdge.Bottom ? HorizontalThickness : VerticalThickness;
+            var thickness = nearest.Edge is DockEdge.Top or DockEdge.Bottom ? HorizontalBarHeight : VerticalThickness;
             _preview.ShowAt(AppBar.EdgeRect(monitor, nearest.Edge, thickness));
         }
         else

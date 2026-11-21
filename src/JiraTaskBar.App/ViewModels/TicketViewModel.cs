@@ -2,6 +2,7 @@ using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using JiraTaskBar.Core.Jira;
+using JiraTaskBar.Core.Storage;
 
 namespace JiraTaskBar.App.ViewModels;
 
@@ -21,12 +22,11 @@ public sealed partial class TicketViewModel : ObservableObject
     private readonly Action<TicketViewModel> _open;
     private readonly Action<TicketViewModel> _comment;
     private readonly Action<TicketViewModel> _calendar;
-    private readonly Func<bool> _showTitles;
+    private readonly Func<AppSettings> _settings;
     private readonly Func<bool> _canComment;
 
-    /// <param name="showTitles">Whether the summary appears on the button (it is always in the tooltip).</param>
     public TicketViewModel(JiraIssue issue, Action<TicketViewModel> toggle, Action<TicketViewModel> open,
-        Action<TicketViewModel> comment, Func<bool>? showTitles = null, Func<bool>? canComment = null,
+        Action<TicketViewModel> comment, Func<AppSettings>? settings = null, Func<bool>? canComment = null,
         Action<TicketViewModel>? calendar = null)
     {
         _issue = issue;
@@ -34,7 +34,8 @@ public sealed partial class TicketViewModel : ObservableObject
         _open = open;
         _comment = comment;
         _calendar = calendar ?? (_ => { });
-        _showTitles = showTitles ?? (() => true);
+        var defaults = new AppSettings();
+        _settings = settings ?? (() => defaults);
         _canComment = canComment ?? (() => true);
     }
 
@@ -43,7 +44,8 @@ public sealed partial class TicketViewModel : ObservableObject
     public string Key => Issue.Key;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(Summary), nameof(PriorityLabel), nameof(PriorityBrush), nameof(MetaLine), nameof(SubtitleText), nameof(HasSubtitle))]
+    [NotifyPropertyChangedFor(nameof(Key), nameof(Summary), nameof(PriorityLabel), nameof(PriorityBrush), nameof(MetaLine))]
+    [NotifyPropertyChangedFor(nameof(PrimaryText), nameof(SubtitleText), nameof(HasSubtitle))]
     [NotifyPropertyChangedFor(nameof(TypeGlyph), nameof(TypeGlyphBrush), nameof(DueState), nameof(HasUrgency))]
     private JiraIssue _issue;
 
@@ -61,15 +63,17 @@ public sealed partial class TicketViewModel : ObservableObject
     public Brush TypeGlyphBrush => Services.TypeGlyph.For(Issue.IssueType).Brush;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SubtitleText), nameof(HasSubtitle))]
     private bool _isActive;
 
     [ObservableProperty]
     private bool _isStale;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SubtitleText), nameof(HasSubtitle))]
+    [NotifyPropertyChangedFor(nameof(TimerText))]
     private string _elapsedText = string.Empty;
+
+    [ObservableProperty]
+    private string? _groupLabel;
 
     public string Summary => Issue.Summary;
     public DueDateState DueState => DueDateProgress.CalculateUrgency(Issue, DateTimeOffset.UtcNow, TimeZoneInfo.Local);
@@ -84,16 +88,21 @@ public sealed partial class TicketViewModel : ObservableObject
     public string MetaLine => string.Join(" · ",
         new[] { Issue.IssueType, PriorityLabel, Issue.Status }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
-    /// <summary>Second line on the button: running time when active, otherwise the summary (if titles are shown).</summary>
-    public string SubtitleText => IsActive ? "● " + ElapsedText : _showTitles() ? Summary : string.Empty;
-
+    private bool ShowNumber => _settings().ShowTicketNumbersOnBar || !_settings().ShowTitlesOnBar;
+    public string PrimaryText => ShowNumber ? Key : Summary;
+    public string SubtitleText => ShowNumber && _settings().ShowTitlesOnBar ? Summary : string.Empty;
     public bool HasSubtitle => SubtitleText.Length > 0;
+    public string TimerText => "● " + ElapsedText;
+    public bool ShowPriorityIcon => _settings().ShowPriorityIconOnBar;
+    public bool ShowTypeIcon => _settings().ShowTypeIconOnBar;
 
-    /// <summary>Call after the show-titles setting changes.</summary>
-    public void RefreshSubtitle()
+    public void RefreshDisplay()
     {
+        OnPropertyChanged(nameof(PrimaryText));
         OnPropertyChanged(nameof(SubtitleText));
         OnPropertyChanged(nameof(HasSubtitle));
+        OnPropertyChanged(nameof(ShowPriorityIcon));
+        OnPropertyChanged(nameof(ShowTypeIcon));
     }
 
     [RelayCommand]

@@ -143,13 +143,13 @@ public static class IssueOrdering
               .ThenBy(i => NumberPart(i.Key))
               .ToList();
 
-    private static string ProjectPart(string key)
+    public static string ProjectPart(string key)
     {
         var dash = key.LastIndexOf('-');
         return dash < 0 ? key : key[..dash];
     }
 
-    private static long NumberPart(string key)
+    public static long NumberPart(string key)
     {
         var dash = key.LastIndexOf('-');
         return dash >= 0 && long.TryParse(key[(dash + 1)..], out var n) ? n : 0;

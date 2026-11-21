@@ -8,6 +8,17 @@ public sealed record JiraSla(string Name, bool Completed, bool Breached, bool Pa
     public DateTimeOffset ObservedAt { get; init; }
     public DateTimeOffset? BreachAt { get; init; }
 
+    public double? RemainingForSort(DateTimeOffset now)
+    {
+        if (Completed || RemainingMilliseconds is not { } remaining) return null;
+        return HasContinuousDeadline
+            ? Math.Min(remaining, (BreachAt!.Value - now).TotalMilliseconds)
+            : remaining;
+    }
+
+    internal bool HasContinuousDeadline => !Paused && RemainingMilliseconds is > 0 and var snapshot &&
+        BreachAt is { } breach && Math.Abs((breach - ObservedAt).TotalMilliseconds - snapshot) <= 2000;
+
     internal static JiraSla? Parse(JsonObject metric)
     {
         var ongoing = metric["ongoingCycle"] as JsonObject;
