@@ -30,12 +30,19 @@ public sealed class AppSettings
     public string? Email { get; set; }
 
     public string Jql { get; set; } = DefaultJql;
+    public Dictionary<string, string[]> AdditionalTicketKeysBySite { get; set; } = new(StringComparer.Ordinal);
     public int RefreshMinutes { get; set; } = 5;
     public ShortSessionMode ShortSessions { get; set; } = ShortSessionMode.RoundUpToMinute;
     /// <summary>Prompt to exclude time away (lock/sleep) when the gap is at least this long. 0 disables.</summary>
     public int IdlePromptMinutes { get; set; } = 10;
     /// <summary>Minute interval used to divide and snap the Day/Week worklog calendar.</summary>
     public int CalendarResolutionMinutes { get; set; } = 30;
+    public DayOfWeek? CalendarFirstDayOfWeek { get; set; }
+    public DayOfWeek[]? CalendarWorkdays { get; set; }
+    public int CalendarWorkStartMinute { get; set; } = 9 * 60;
+    public int CalendarWorkEndMinute { get; set; } = 17 * 60;
+    public bool ShowOnlyCalendarWorkdays { get; set; }
+    public bool ShowOnlyCalendarWorkHours { get; set; }
     public int? DailyWorklogTargetMinutes { get; set; }
     public List<WorklogTypeColor> WorklogTypeColors { get; set; } = [];
     public bool StartWithWindows { get; set; }

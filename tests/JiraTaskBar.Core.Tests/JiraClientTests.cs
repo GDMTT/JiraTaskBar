@@ -7,6 +7,25 @@ namespace JiraTaskBar.Core.Tests;
 
 public class JiraClientTests
 {
+    [Fact]
+    public async Task QueueCatalogPagesProjectsAndQueuesOnTheConnectedSite()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"start":0,"isLastPage":false,"values":[{"id":"1","projectKey":"OPS"}]}""")
+            .Respond("""{"start":1,"isLastPage":true,"values":[{"id":"2","projectKey":"HELP"}]}""")
+            .Respond("""{"start":0,"isLastPage":false,"values":[{"name":"Waiting","jql":"status = Waiting"}]}""")
+            .Respond("""{"start":1,"isLastPage":true,"values":[{"name":"New","jql":"status = New"}]}""")
+            .Respond("{}", HttpStatusCode.Forbidden);
+
+        var queues = await client.GetQueuesAsync();
+
+        Assert.Collection(queues,
+            queue => Assert.Equal(new JiraQueue("OPS", "New", "status = New"), queue),
+            queue => Assert.Equal(new JiraQueue("OPS", "Waiting", "status = Waiting"), queue));
+        Assert.EndsWith("/servicedesk?start=1&limit=50", handler.Requests[1].PathAndQuery);
+        Assert.EndsWith("/servicedesk/1/queue?start=1&limit=50", handler.Requests[3].PathAndQuery);
+    }
+
     private static (JiraClient Client, FakeHandler Handler) Create()
     {
         var handler = new FakeHandler();
@@ -80,6 +99,59 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Added_ticket_lookup_associates_a_moved_issue_with_its_requested_key()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"key":"ABC-2","fields":{"summary":"Outside the queue","priority":{"id":"4"}}}""");
+
+        var result = Assert.Single(await client.FetchIssuesByKeyAsync(["OLD-2", "old-2"],
+            [new JiraPriority("4", "Medium", 2)]));
+
+        Assert.Equal("OLD-2", result.RequestedKey);
+        Assert.Equal("ABC-2", result.Issue!.Key);
+        Assert.Equal(2, result.Issue.PriorityRank);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.StartsWith("/rest/api/3/issue/OLD-2?fields=", request.PathAndQuery);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, false)]
+    [InlineData(HttpStatusCode.Forbidden, false)]
+    [InlineData(HttpStatusCode.BadGateway, true)]
+    [InlineData(HttpStatusCode.RequestTimeout, true)]
+    public async Task Added_ticket_lookup_distinguishes_missing_issues_from_retryable_failures(HttpStatusCode status, bool canRetry)
+    {
+        var (client, handler) = Create();
+        handler.Respond("{}", status);
+
+        Assert.Equal(new JiraIssueLookup("ABC-2", null, canRetry),
+            Assert.Single(await client.FetchIssuesByKeyAsync(["ABC-2"], [])));
+    }
+
+    [Fact]
+    public async Task Worklog_issue_search_includes_older_starts_and_reads_past_the_queue_limit()
+    {
+        var (client, handler) = Create();
+        for (var page = 0; page < 3; page++)
+        {
+            handler.Respond(System.Text.Json.JsonSerializer.Serialize(new
+            {
+                issues = Enumerable.Range(page * 100 + 1, 100).Select(id => new { key = $"TEST-{id}" }),
+                isLast = page == 2,
+                nextPageToken = $"page {page + 1}",
+            }));
+        }
+
+        var issues = await client.FindWorklogIssuesAsync("site:account", new(2026, 11, 24));
+
+        Assert.Equal(300, issues.Count);
+        Assert.Contains("worklogAuthor = \"site:account\" AND worklogDate < \"2026-11-24\"&",
+            Uri.UnescapeDataString(handler.Requests[0].PathAndQuery));
+        Assert.Contains("nextPageToken=page%202", handler.Requests[2].PathAndQuery);
+    }
+
+    [Fact]
     public async Task Request_sla_keeps_the_latest_completed_cycle_ahead_of_the_due_date()
     {
         var (client, handler) = Create();
@@ -114,11 +186,12 @@ public class JiraClientTests
         var (client, handler) = Create();
         handler.Respond("""
             {"values":[{"name":"Response","ongoingCycle":{"breached":false,"withinCalendarHours":false,
-                "goalDuration":{"millis":600000},"remainingTime":{"millis":300000}},
+                "goalDuration":{"millis":600000},"elapsedTime":{"millis":300000},"breachTime":{"epochMillis":2000}},
                 "completedCycles":[{"breached":true}]}],"isLastPage":true}
             """);
         var issue = new JiraIssue("SD-2", "Ticket", null, "Open", "service_desk", "Task")
             { Sla = await client.GetRequestSlaAsync("SD-2") };
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(2000), issue.Sla!.BreachAt);
         var urgency = DueDateProgress.CalculateUrgency(issue, DateTimeOffset.UtcNow, TimeZoneInfo.Utc);
         Assert.Contains("Paused", urgency.Tooltip);
         Assert.Contains("Remaining when checked at", urgency.Tooltip);
@@ -199,7 +272,7 @@ public class JiraClientTests
         handler.Respond("""
             {"startAt":0,"maxResults":1,"total":2,"worklogs":[
               {"id":"10","started":"2026-11-03T09:00:00.000+1300","timeSpentSeconds":900,
-               "author":{"displayName":"Pat"},"comment":{"type":"doc","version":1,"content":[
+               "author":{"displayName":"Pat","accountId":"atlassian-account"},"comment":{"type":"doc","version":1,"content":[
                  {"type":"paragraph","content":[{"type":"text","text":"Investigated issue"}]}]}}
             ]}
             """);
@@ -216,6 +289,7 @@ public class JiraClientTests
         Assert.Equal("Investigated issue", worklogs[0].Comment);
         Assert.Equal(900, worklogs[0].TimeSpentSeconds);
         Assert.Equal("Pat", worklogs[0].Author);
+        Assert.Equal("atlassian-account", worklogs[0].AuthorAccountId);
         Assert.Equal("/rest/api/3/issue/ABC-1/worklog?startAt=0&maxResults=100", handler.Requests[0].PathAndQuery);
         Assert.Contains("startAt=1", handler.Requests[1].PathAndQuery);
     }

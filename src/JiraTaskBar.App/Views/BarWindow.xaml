@@ -15,6 +15,7 @@
         Foreground="{DynamicResource TextFillColorPrimaryBrush}"
         BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
         BorderThickness="1"
+        AllowDrop="True" DragOver="BrowserTicket_DragOver" Drop="BrowserTicket_Drop"
         UseLayoutRounding="True">
 
     <Window.Resources>
@@ -132,6 +133,24 @@
         <StackPanel x:Name="Footer" DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="2">
             <ui:Button Content="{Binding FilterLabel}" ToolTip="{Binding FilterTooltip}" Click="Filter_Click"
                        Appearance="Transparent" Padding="3" MinWidth="0" MinHeight="0" FontSize="10" />
+            <ui:SymbolIcon x:Name="RefreshWarning" Symbol="Warning24" Foreground="#F5A623" FontSize="16" Margin="3,0"
+                           VerticalAlignment="Center" Focusable="True" ToolTip="{Binding StatusMessage}"
+                           AutomationProperties.Name="{Binding StatusMessage}">
+                <ui:SymbolIcon.Style>
+                    <Style TargetType="ui:SymbolIcon">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsEmpty}" Value="False" />
+                                    <Condition Binding="{Binding HasStatus}" Value="True" />
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Visibility" Value="Visible" />
+                            </MultiDataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ui:SymbolIcon.Style>
+            </ui:SymbolIcon>
             <ui:Button Appearance="Transparent" Padding="5" MinWidth="0" MinHeight="0"
                        Icon="{ui:SymbolIcon Warning24}" Foreground="#F5A623"
                        Visibility="{Binding HasPending, Converter={StaticResource BoolToVisibility}}"
@@ -155,7 +174,7 @@
                           HorizontalScrollBarVisibility="Disabled"
                           PanningMode="Both"
                           PreviewMouseWheel="Scroller_PreviewMouseWheel">
-                <ItemsControl ItemsSource="{Binding Tickets}" ItemTemplate="{StaticResource TicketTemplate}">
+                <ItemsControl x:Name="TicketItems" ItemsSource="{Binding Tickets}" ItemTemplate="{StaticResource TicketTemplate}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <StackPanel Orientation="{Binding DataContext.Orientation, RelativeSource={RelativeSource AncestorType=Window}}" />

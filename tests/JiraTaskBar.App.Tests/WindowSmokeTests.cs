@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.Http;
 using System.Runtime.ExceptionServices;
 using System.Reflection;
 using System.Windows;
@@ -48,6 +49,8 @@ public class WindowSmokeTests
             bar.PlaceFloating(null, null, monitor);
             bar.UpdateLayout();
             Assert.True(bar.ActualHeight > 0);
+            AssertBrowserDropTargets(controller, bar, monitor, issue);
+            AssertQueueBrowserKeepsTheLatestSource(issue);
             var indicator = new DueDateIndicator { Width = 16, Height = 16 };
             System.Windows.Automation.AutomationProperties.SetName(indicator, "Due today");
             Assert.Equal("Due today", System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(indicator).GetName());
@@ -68,34 +71,9 @@ public class WindowSmokeTests
             {
                 indicator.State = state;
                 indicatorWindow.UpdateLayout();
-                var rendered = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-                rendered.Render(indicator);
-                if (state.Kind == DueDateKind.Today)
-                {
-                    var dueToday = new DueDateIndicator { Width = 16, Height = 16, State = state };
-                    dueToday.Measure(new Size(16, 16));
-                    dueToday.Arrange(new Rect(0, 0, 16, 16));
-                    rendered = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-                    rendered.Render(dueToday);
-                    var pixels = new byte[16 * 16 * 4];
-                    rendered.CopyPixels(pixels, 16 * 4, 0);
-                    var redPixels = 0;
-                    var whiteOverlayPixels = 0;
-                    for (var y = 0; y < 16; y++)
-                    for (var x = 0; x < 16; x++)
-                    {
-                        var pixel = (y * 16 + x) * 4;
-                        if (pixels[pixel + 3] > 100 && pixels[pixel + 2] > 100 &&
-                            pixels[pixel + 2] > pixels[pixel + 1] * 2) redPixels++;
-                        if (x is >= 4 and <= 11 && y is >= 3 and <= 12 && pixels[pixel + 3] > 240 &&
-                            pixels[pixel] > 240 && pixels[pixel + 1] > 240 && pixels[pixel + 2] > 240) whiteOverlayPixels++;
-                    }
-                    Assert.True(redPixels > 0 && whiteOverlayPixels == 0,
-                        $"The due-today indicator should be a red pie without a white letter overlay. " +
-                        $"Found {redPixels} red pixels and {whiteOverlayPixels} white overlay pixels.");
-                }
                 Assert.Same(indicator, indicator.InputHitTest(new Point(8, 8)));
             }
+            AssertUrgencyPieColors();
             indicatorWindow.Close();
             typeof(BarViewModel).GetField("_lastIssues", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .SetValue(controller.Bar, new[] { issue });
@@ -171,6 +149,8 @@ public class WindowSmokeTests
             }
             AssertCalendarWorklogsStayInDayColumns(issue);
             AssertSyncedOvernightWorklogKeepsItsDaySegment(issue);
+            AssertWeeklyTotalsUseDiscoveredWorklogsAndConfiguredStart(issue);
+            AssertCalendarFiltersPreserveFullTotals(issue);
 
             var addWorklog = new AddWorklogWindow([issue], issue, DateTimeOffset.Now,
                 TimeSpan.FromMinutes(30), new NullJiraClient());
@@ -192,19 +172,331 @@ public class WindowSmokeTests
             bar.Close();
             Assert.True(bar.IsVisible);
 
-            var settings = new SettingsWindow(new AppSettings(),
-                new StoredCredentials("https://example.atlassian.net/", "a@b.c", "t"), firstRun: false,
+            var settings = new SettingsWindow(new AppSettings
+            {
+                AdditionalTicketKeysBySite = new()
+                {
+                    ["https://example.atlassian.net/"] = ["TEST-1", "TEST-2"],
+                    ["https://other.atlassian.net/"] = ["OTHER-9"],
+                },
+            }, new StoredCredentials("https://example.atlassian.net/", "a@b.c", "t"), firstRun: false,
                 message: "Jira rejected the saved API token.");
             settings.Show();
             settings.UpdateLayout();
+            var workdays = (WrapPanel)settings.FindName("WorkdaysPanel");
+            Assert.Equal(7, workdays.Children.Count);
+            Assert.Equal(5, workdays.Children.OfType<CheckBox>().Count(box => box.IsChecked == true));
+            Assert.All(workdays.Children.OfType<CheckBox>(), box => Assert.IsType<string>(box.ToolTip));
+            foreach (var name in new[] { "SiteBox", "EmailBox", "TokenBox", "CloudIdBox", "JqlBox", "RefreshBox",
+                         "ShortSessionBox", "WorkStartBox", "WorkEndBox", "OnlyWorkdaysBox", "OnlyWorkHoursBox", "WorklogColorsBox", "StartupSwitch" })
+                Assert.IsType<string>(((FrameworkElement)settings.FindName(name)).ToolTip);
+            var tabs = (TabControl)settings.FindName("SettingsTabs");
+            Assert.Equal(8, tabs.Items.Count);
+            Assert.Same(settings.FindName("JiraTab"), tabs.SelectedItem);
+            var additionalTickets = (TextBox)settings.FindName("AdditionalTicketsBox");
+            Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
+            tabs.SelectedItem = settings.FindName("AddTicketsTab");
+            additionalTickets.CaretIndex = additionalTickets.Text.Length;
+            var moveUp = (ButtonBase)settings.FindName("MoveTicketLineUp");
+            Assert.True(moveUp.IsTabStop);
+            moveUp.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert.Equal(string.Join(Environment.NewLine, "TEST-2", "TEST-1"), additionalTickets.Text);
+            Assert.Equal("TEST-2", additionalTickets.SelectedText);
+            ((ButtonBase)settings.FindName("MoveTicketLineDown")).RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
+            var siteBox = (TextBox)settings.FindName("SiteBox");
+            siteBox.Text = "other.atlassian.net";
+            Assert.Equal("OTHER-9", additionalTickets.Text);
+            siteBox.Text = "fresh.atlassian.net";
+            Assert.Empty(additionalTickets.Text);
+            siteBox.Text = "example.atlassian.net";
+            Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
+            additionalTickets.Text = "not-a-ticket";
+            typeof(SettingsWindow).GetMethod("Save_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(settings, [settings, new RoutedEventArgs()]);
+            Assert.Same(settings.FindName("AddTicketsTab"), tabs.SelectedItem);
+            Assert.Contains("Enter a Jira ticket key", ((Wpf.Ui.Controls.InfoBar)settings.FindName("Status")).Message);
             settings.Close();
+            const string dataCenterSite = "https://jira.example.org/jira/";
+            const string alternateContext = "https://jira.example.org/Jira/";
+            var siteSettings = new AppSettings();
+            siteSettings.AdditionalTicketKeysBySite[dataCenterSite] = ["LOWER-1"];
+            siteSettings.AdditionalTicketKeysBySite[alternateContext] = ["UPPER-1"];
+            var dataCenterSettings = new SettingsWindow(siteSettings,
+                new StoredCredentials(dataCenterSite, "agent", "example-password", IsDataCenter: true), firstRun: false);
+            try
+            {
+                var authentication = (ComboBox)dataCenterSettings.FindName("AuthenticationBox");
+                var secret = (PasswordBox)dataCenterSettings.FindName("TokenBox");
+                Assert.True(dataCenterSettings.IsDataCenter);
+                Assert.Equal("_Password", ((Label)dataCenterSettings.FindName("SecretLabel")).Content);
+                Assert.Empty(secret.Password);
+                Assert.Equal(Visibility.Collapsed, ((FrameworkElement)dataCenterSettings.FindName("TokenTypePanel")).Visibility);
+                Assert.Equal(Visibility.Visible, ((FrameworkElement)dataCenterSettings.FindName("ForgetSignInButton")).Visibility);
+                var site = (TextBox)dataCenterSettings.FindName("SiteBox");
+                var pins = (TextBox)dataCenterSettings.FindName("AdditionalTicketsBox");
+                Assert.Equal("LOWER-1", pins.Text);
+                pins.Text = "LOWER-2";
+                site.Text = alternateContext;
+                Assert.Equal("UPPER-1", pins.Text);
+                site.Text = dataCenterSite;
+                Assert.Equal("LOWER-2", pins.Text);
+                secret.Password = "temporary-example";
+                authentication.SelectedIndex = 0;
+                Assert.False(dataCenterSettings.IsDataCenter);
+                Assert.Equal("API _token", ((Label)dataCenterSettings.FindName("SecretLabel")).Content);
+                Assert.Empty(secret.Password);
+            }
+            finally { dataCenterSettings.Close(); }
 
+            AssertAddedTicketsJoinTheQueue(controller, bar, issue);
+            AssertFilteredRunningTicketsPreservePinOrder(controller, issue);
             typeof(AppController).GetProperty(nameof(AppController.IsExiting))!.SetValue(controller, true);
             bar.Close();
             controller.Dispose();
             AssertCalendarClickEditsSavedWorklog(issue);
             app.Shutdown();
         });
+    }
+
+    private static void AssertUrgencyPieColors()
+    {
+        byte[] Render(DueDateKind kind, double fraction)
+        {
+            var indicator = new DueDateIndicator { Width = 16, Height = 16, State = new(kind, fraction, "Urgency") };
+            indicator.Measure(new Size(16, 16));
+            indicator.Arrange(new Rect(0, 0, 16, 16));
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(16, 16, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+            bitmap.Render(indicator);
+            var pixels = new byte[16 * 16 * 4];
+            bitmap.CopyPixels(pixels, 16 * 4, 0);
+            return pixels;
+        }
+
+        var full = Render(DueDateKind.Upcoming, 1);
+        var half = Render(DueDateKind.Upcoming, 0.5);
+        var low = Render(DueDateKind.Today, 0.1);
+        var overdue = Render(DueDateKind.Overdue, 0);
+        var center = (8 * 16 + 8) * 4;
+        var filledSector = (3 * 16 + 9) * 4;
+        var usedSector = (6 * 16 + 4) * 4;
+        var ring = (1 * 16 + 8) * 4;
+        Assert.True(full[center + 1] > full[center + 2] && full[center + 3] == 255);
+        Assert.True(half[filledSector + 2] > half[filledSector + 1] && half[filledSector + 1] > half[filledSector]);
+        Assert.True(half[usedSector + 3] < 100 && low[usedSector + 3] < 100);
+        Assert.True(low[filledSector + 2] > low[filledSector + 1] * 2);
+        Assert.Equal(new byte[] { 0, 0, 0, 255 }, overdue[center..(center + 4)]);
+        Assert.True(overdue[ring + 2] > overdue[ring + 1] * 2);
+    }
+
+    private static void AssertBrowserDropTargets(AppController controller, BarWindow bar, MonitorInfo monitor, JiraIssue issue)
+    {
+        var second = new TicketViewModel(issue with { Key = "SD-43" }, _ => { }, _ => { }, _ => { });
+        controller.Bar.Tickets.Add(second);
+        try
+        {
+            var items = (ItemsControl)bar.FindName("TicketItems");
+            foreach (var edge in new[] { DockEdge.Floating, DockEdge.Left })
+            {
+                bar.ApplyDock(edge, monitor);
+                bar.UpdateLayout();
+                var ticket = Assert.IsAssignableFrom<FrameworkElement>(items.ItemContainerGenerator.ContainerFromItem(second));
+                var before = new Point(ticket.ActualWidth / 4, ticket.ActualHeight / 4);
+                var after = new Point(ticket.ActualWidth * 3 / 4, ticket.ActualHeight * 3 / 4);
+                foreach (var (point, expected) in new[] { (before, false), (after, true) })
+                {
+                    var hit = Assert.IsAssignableFrom<DependencyObject>(ticket.InputHitTest(point));
+                    var (anchor, afterAnchor) = bar.GetBrowserDropTarget(hit, element => ticket.TranslatePoint(point, element));
+                    Assert.Equal((second.Key, expected), (anchor, afterAnchor));
+                    List<string> pins = [issue.Key, second.Key, "SD-44"];
+                    Assert.True(TicketPinOrder.Place(pins, "SD-99", anchor, afterAnchor, moveExisting: true));
+                    Assert.Equal(expected ? [issue.Key, second.Key, "SD-99", "SD-44"] :
+                        new[] { issue.Key, "SD-99", second.Key, "SD-44" }, pins);
+                }
+            }
+            var (emptyAnchor, emptyAfter) = bar.GetBrowserDropTarget(bar, _ => default);
+            Assert.Equal((null, false), (emptyAnchor, emptyAfter));
+            List<string> emptySpacePins = [issue.Key, second.Key];
+            Assert.True(TicketPinOrder.Place(emptySpacePins, "SD-99", emptyAnchor, emptyAfter, moveExisting: true));
+            Assert.Equal([issue.Key, second.Key, "SD-99"], emptySpacePins);
+        }
+        finally
+        {
+            controller.Bar.Tickets.Remove(second);
+            bar.ApplyDock(DockEdge.Floating, monitor);
+            bar.PlaceFloating(null, null, monitor);
+        }
+    }
+
+    private static void AssertQueueBrowserKeepsTheLatestSource(JiraIssue issue)
+    {
+        var initial = new TaskCompletionSource<IReadOnlyList<JiraIssue>>();
+        var current = new TaskCompletionSource<IReadOnlyList<JiraIssue>>();
+        var closing = new TaskCompletionSource<IReadOnlyList<JiraIssue>>();
+        CancellationToken initialRequest = default;
+        CancellationToken closingRequest = default;
+        var client = new NullJiraClient
+        {
+            Queues = [new JiraQueue("SD", "Open", "status = Open"), new JiraQueue("SD", "Waiting", "status = Waiting")],
+            BrowseIssues = (jql, token) =>
+            {
+                if (jql == "assignee = currentUser()") return Task.FromResult<IReadOnlyList<JiraIssue>>([issue]);
+                if (jql == "status = Waiting") return current.Task;
+                if (!initialRequest.CanBeCanceled)
+                {
+                    initialRequest = token;
+                    return initial.Task;
+                }
+                closingRequest = token;
+                return closing.Task;
+            },
+        };
+        var window = new QueueBrowserWindow(client, "assignee = currentUser()", (_, _) => "Pinned");
+        try
+        {
+            window.Show();
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            var source = (ComboBox)window.FindName("SourceBox");
+            var status = (TextBlock)window.FindName("ResultsStatus");
+            var grid = (DataGrid)window.FindName("TicketGrid");
+            Assert.Equal(issue.Key, Assert.IsType<QueueBrowserWindow.TicketRow>(Assert.Single(grid.Items.Cast<object>())).Issue.Key);
+
+            source.SelectedIndex = 1;
+            Assert.True(initialRequest.CanBeCanceled);
+            Assert.Contains("Loading", status.Text);
+            source.SelectedIndex = 2;
+            Assert.True(initialRequest.IsCancellationRequested);
+
+            current.SetResult([issue]);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            Assert.Equal(issue.Key, Assert.IsType<QueueBrowserWindow.TicketRow>(Assert.Single(grid.Items.Cast<object>())).Issue.Key);
+
+            initial.SetResult([issue with { Key = "SD-99" }]);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            Assert.Equal(issue.Key, Assert.IsType<QueueBrowserWindow.TicketRow>(Assert.Single(grid.Items.Cast<object>())).Issue.Key);
+
+            source.SelectedIndex = 1;
+            Assert.True(closingRequest.CanBeCanceled);
+        }
+        finally { window.Close(); }
+        Assert.True(closingRequest.IsCancellationRequested);
+        closing.SetCanceled();
+    }
+
+    private static void AssertAddedTicketsJoinTheQueue(AppController controller, BarWindow bar, JiraIssue issue)
+    {
+        const string requestedKey = "OLD-2";
+        var manualIssue = issue with { Key = "TEST-2", Priority = new JiraPriority("4", "Low", 4) };
+        var queueOnly = issue with { Key = "TEST-1", Priority = new JiraPriority("1", "Highest", 1) };
+        var client = new NullJiraClient
+        {
+            QueueIssues = [queueOnly, issue],
+            AddedLookups = [new(requestedKey, manualIssue), new("TEST-999", null)],
+        };
+        var clientProperty = typeof(AppController).GetProperty(nameof(AppController.Client))!;
+        var original = controller.Client;
+        clientProperty.SetValue(controller, client);
+        controller.Settings.AdditionalTicketKeysBySite[client.Connection.SiteUrl.AbsoluteUri] =
+            [issue.Key.ToLowerInvariant(), requestedKey, "TEST-999"];
+        try
+        {
+            var (issues, pinnedCount, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([requestedKey, "TEST-999"], client.RequestedAddedKeys.Order());
+            Assert.Equal([issue.Key, manualIssue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+            Assert.Equal(2, pinnedCount);
+            Assert.Contains("one added ticket", warning);
+            controller.Bar.StatusMessage = warning;
+            bar.UpdateLayout();
+            var indicator = (FrameworkElement)bar.FindName("RefreshWarning");
+            Assert.Equal(Visibility.Visible, indicator.Visibility);
+            Assert.Equal(warning, indicator.ToolTip);
+
+            var newOrder = new[] { requestedKey, issue.Key, "TEST-999" };
+            var site = client.Connection.SiteUrl.AbsoluteUri;
+            controller.Settings.AdditionalTicketKeysBySite[site] = newOrder;
+            var store = new JsonFileStore<AppSettings>(AppPaths.File("pin-order-test.json"));
+            store.Save(controller.Settings);
+            var persisted = store.Load()!.AdditionalTicketKeysBySite[site];
+            Assert.Equal(newOrder, persisted);
+            controller.Settings.AdditionalTicketKeysBySite[site] = persisted;
+            (issues, _, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([manualIssue.Key, issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+
+            client.QueueIssues = [queueOnly];
+            client.AddedLookups = [new(requestedKey, manualIssue), new(issue.Key, issue), new("TEST-999", null)];
+            (issues, pinnedCount, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([manualIssue.Key, issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+            Assert.Equal(2, pinnedCount);
+            client.QueueIssues = [queueOnly, issue];
+
+            client.AddedLookups = [new(requestedKey, null, CanRetry: true), new("TEST-999", null)];
+            (issues, _, warning) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([manualIssue.Key, issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+            Assert.Contains("previously loaded", warning);
+
+            client.AddedLookups = [new(requestedKey, null), new("TEST-999", null)];
+            (issues, pinnedCount, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal([issue.Key, queueOnly.Key], issues.Select(ticket => ticket.Key));
+            Assert.Equal(1, pinnedCount);
+            client.AddedLookups = [new(requestedKey, manualIssue), new("TEST-999", null)];
+            _ = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+
+            var otherClient = new NullJiraClient
+            {
+                Connection = new(new Uri("https://other.atlassian.net/"), "a@b.c", "other-token"),
+                QueueIssues = [issue],
+            };
+            clientProperty.SetValue(controller, otherClient);
+            (issues, pinnedCount, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Empty(otherClient.RequestedAddedKeys);
+            Assert.Equal(issue.Key, Assert.Single(issues).Key);
+            Assert.Equal(0, pinnedCount);
+            controller.Settings.AdditionalTicketKeysBySite[otherClient.Connection.SiteUrl.AbsoluteUri] = [requestedKey];
+            otherClient.AddedLookups = [new(requestedKey, null, CanRetry: true)];
+            (issues, _, _) = controller.FetchIssuesAsync().GetAwaiter().GetResult();
+            Assert.Equal(issue.Key, Assert.Single(issues).Key);
+        }
+        finally
+        {
+            controller.Bar.StatusMessage = null;
+            clientProperty.SetValue(controller, original);
+        }
+    }
+
+    private static void AssertFilteredRunningTicketsPreservePinOrder(AppController controller, JiraIssue template)
+    {
+        var firstPin = template with { Key = "PIN-1", Summary = "Visible pin", Priority = new JiraPriority("5", "Low", 5) };
+        var secondPin = template with { Key = "PIN-2", Summary = "Hidden pin", Priority = new JiraPriority("1", "Highest", 1) };
+        var runningQueue = template with { Key = "QUEUE-1", Summary = "Hidden queue ticket", Priority = new JiraPriority("2", "High", 2) };
+        var visibleQueue = template with { Key = "QUEUE-2", Summary = "Visible queue ticket", Priority = new JiraPriority("4", "Normal", 4) };
+        var bar = controller.Bar;
+        var issuesField = typeof(BarViewModel).GetField("_lastIssues", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var pinsField = typeof(BarViewModel).GetField("_pinnedCount", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var previousIssues = issuesField.GetValue(bar);
+        var previousPinCount = pinsField.GetValue(bar);
+        var previousFilter = bar.Filter;
+        issuesField.SetValue(bar, new[] { firstPin, secondPin, runningQueue, visibleQueue });
+        pinsField.SetValue(bar, 2);
+        try
+        {
+            bar.ApplyFilter(new TicketFilter { Summary = "Visible" });
+            controller.Tracker.Start(runningQueue.Key);
+            Assert.Equal([firstPin.Key, runningQueue.Key, visibleQueue.Key], bar.Tickets.Select(ticket => ticket.Key));
+            Assert.True(bar.Tickets[1].IsStale);
+            controller.Tracker.Stop(controller.Tracker.Active!.StartedUtc);
+
+            controller.Tracker.Start(secondPin.Key);
+            Assert.Equal([firstPin.Key, secondPin.Key, visibleQueue.Key], bar.Tickets.Select(ticket => ticket.Key));
+            Assert.True(bar.Tickets[1].IsStale);
+        }
+        finally
+        {
+            if (controller.Tracker.Active is { } active) controller.Tracker.Stop(active.StartedUtc);
+            issuesField.SetValue(bar, previousIssues);
+            pinsField.SetValue(bar, previousPinCount);
+            bar.ApplyFilter(previousFilter);
+        }
     }
 
     private static void AssertSyncedOvernightWorklogKeepsItsDaySegment(JiraIssue issue)
@@ -234,10 +526,122 @@ public class WindowSmokeTests
         finally { calendar.Close(); }
     }
 
+    private static void AssertWeeklyTotalsUseDiscoveredWorklogsAndConfiguredStart(JiraIssue selected)
+    {
+        const string outsideQueue = "OTHER-42";
+        const string accountId = "test-account";
+        var sunday = new DateOnly(2026, 11, 15);
+        var outsideIssue = new JiraIssue(outsideQueue, "Unassigned ticket", null, "Done", "software", "Task");
+        JiraWorklog Worklog(string id, string key, int day, int hour, int minute, int minutes, string author = accountId)
+        {
+            var started = WorklogCalendarLayout.LocalDateTime(sunday.AddDays(day), new TimeOnly(hour, minute), TimeZoneInfo.Local);
+            return new JiraWorklog(id, key, started, minutes * 60, "Tester", null) { AuthorAccountId = author };
+        }
+
+        var client = new NullJiraClient
+        {
+            Discovered = [outsideIssue],
+            Worklogs =
+            [
+                Worklog("1", outsideQueue, -1, 10, 0, 20),
+                Worklog("2", outsideQueue, 0, 23, 30, 75),
+                Worklog("3", outsideQueue, 1, 10, 0, 45),
+                Worklog("4", selected.Key, 2, 10, 0, 35),
+                Worklog("5", outsideQueue, 3, 14, 0, 90),
+                Worklog("6", outsideQueue, 3, 16, 0, 60, "different-account"),
+            ],
+        };
+        var settings = new AppSettings { CalendarFirstDayOfWeek = DayOfWeek.Sunday };
+        var calendar = new WorklogCalendarWindow(selected, client, () => [], settings: () => settings);
+        typeof(WorklogCalendarWindow).GetField("_anchor", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(calendar, sunday.AddDays(3));
+        try
+        {
+            calendar.Show();
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal("Total: 4:05:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+            Assert.Equal(new WorklogCalendarRange(sunday, sunday.AddDays(7)),
+                CalendarField<WorklogCalendarRange>(calendar, "_timeRange"));
+
+            settings.CalendarFirstDayOfWeek = DayOfWeek.Monday;
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal("Total: 3:35:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+            Assert.Equal(new WorklogCalendarRange(sunday.AddDays(1), sunday.AddDays(8)),
+                CalendarField<WorklogCalendarRange>(calendar, "_timeRange"));
+
+            settings.CalendarFirstDayOfWeek = DayOfWeek.Sunday;
+            var overlapOnlyIssue = outsideIssue with { Key = "OTHER-43" };
+            client.Discovered = [outsideIssue, overlapOnlyIssue];
+            client.Worklogs = [.. client.Worklogs!, Worklog("7", overlapOnlyIssue.Key, -3, 12, 0, 72 * 60)];
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal("Total: 16:05:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+
+            ((ComboBox)calendar.FindName("ViewModeBox")).SelectedIndex = (int)WorklogCalendarView.Month;
+            Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);
+            var scheduler = (Grid)calendar.FindName("SchedulerHost");
+            var month = Assert.IsType<Grid>(Assert.Single(scheduler.Children.Cast<UIElement>()));
+            var december = Assert.Single(month.Children.OfType<Border>(), cell => Equals(cell.Tag, new DateOnly(2026, 12, 1)));
+            december.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+                { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
+            Assert.Equal(new DateOnly(2027, 1, 3), client.DiscoveryUntil);
+        }
+        finally { calendar.Close(); }
+    }
+
+    private static void AssertCalendarFiltersPreserveFullTotals(JiraIssue issue)
+    {
+        var sunday = new DateOnly(2026, 11, 15);
+        var tuesday = sunday.AddDays(2);
+        var thursday = sunday.AddDays(4);
+        PendingWorklog Worklog(DateOnly date, int hour, int minutes) => new(Guid.NewGuid(), issue.Key,
+            WorklogCalendarLayout.LocalDateTime(date, new TimeOnly(hour, 0), TimeZoneInfo.Local), minutes * 60, "", 0);
+        PendingWorklog[] logs = [Worklog(tuesday, 8, 45), Worklog(tuesday, 9, 30), Worklog(tuesday, 11, 15),
+            Worklog(sunday.AddDays(3), 12, 60)];
+        var settings = new AppSettings
+        {
+            CalendarFirstDayOfWeek = DayOfWeek.Sunday,
+            CalendarWorkdays = [DayOfWeek.Tuesday, DayOfWeek.Thursday],
+            CalendarWorkStartMinute = 8 * 60 + 15,
+            CalendarWorkEndMinute = 10 * 60 + 45,
+            ShowOnlyCalendarWorkdays = true,
+            ShowOnlyCalendarWorkHours = true,
+        };
+        var calendar = new WorklogCalendarWindow(issue, new NullJiraClient(), () => logs, settings: () => settings);
+        typeof(WorklogCalendarWindow).GetField("_anchor", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(calendar, sunday.AddDays(3));
+        try
+        {
+            calendar.Show();
+            calendar.UpdateLayout();
+            Assert.Equal(new[] { tuesday, thursday }, CalendarField<DateOnly[]>(calendar, "_timeDays"));
+            Assert.Equal("Total: 2:30:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+            var grid = CalendarField<Grid>(calendar, "_timeGrid");
+            Assert.Equal(3, grid.ColumnDefinitions.Count);
+            Assert.Equal(7, grid.RowDefinitions.Count);
+            Assert.Equal(18, grid.RowDefinitions[1].Height.Value);
+            Assert.Equal(18, grid.RowDefinitions[^1].Height.Value);
+            Assert.Equal(4, grid.Children.OfType<System.Windows.Shapes.Line>().Count());
+            var overlay = Assert.Single(grid.Children.OfType<Grid>());
+            Assert.Equal(2, overlay.Children.Count);
+            var clipped = Assert.Single(overlay.Children.OfType<Grid>(), host => Grid.GetRow(host) == 0);
+            Assert.Contains("08:15", Assert.IsType<string>(Assert.Single(clipped.Children.OfType<Border>()).ToolTip));
+            Assert.Equal(2, Grid.GetRowSpan(clipped));
+
+            var scheduler = (Grid)calendar.FindName("SchedulerHost");
+            var view = (ComboBox)calendar.FindName("ViewModeBox");
+            view.SelectedIndex = (int)WorklogCalendarView.Month;
+            Assert.Equal(2, Assert.IsType<Grid>(Assert.Single(scheduler.Children.Cast<UIElement>())).ColumnDefinitions.Count);
+            view.SelectedIndex = (int)WorklogCalendarView.Day;
+            Assert.Equal(thursday, Assert.Single(CalendarField<DateOnly[]>(calendar, "_timeDays")));
+        }
+        finally { calendar.Close(); }
+    }
+
     private static void AssertCalendarWorklogsStayInDayColumns(JiraIssue issue)
     {
         var today = DateOnly.FromDateTime(DateTime.Today);
-        var firstDay = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+        var regionalFirstDay = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+        var firstDay = (DayOfWeek)(((int)regionalFirstDay + 1) % 7);
         var start = today.AddDays(-(7 + (int)today.DayOfWeek - (int)firstDay) % 7);
         var pending = Enumerable.Range(0, 7).SelectMany(day => Enumerable.Range(0, day % 2 + 1)
             .Select(lane => new PendingWorklog(Guid.NewGuid(), issue.Key,
@@ -247,6 +651,7 @@ public class WindowSmokeTests
         var active = new ActiveSession(issue.Key, now.AddMinutes(-2), now);
         var settings = new AppSettings
         {
+            CalendarFirstDayOfWeek = firstDay,
             DailyWorklogTargetMinutes = 60,
             WorklogTypeColors = [new("SD", issue.IssueType, "#203050")],
         };
@@ -279,6 +684,8 @@ public class WindowSmokeTests
                         block => block.ToolTip is string text && text.Contains("Running timer", StringComparison.Ordinal));
                     if (mode == 1)
                     {
+                        Assert.Equal(new WorklogCalendarRange(start, start.AddDays(7)),
+                            CalendarField<WorklogCalendarRange>(calendar, "_timeRange"));
                         var oneLogDay = Enumerable.Range(0, 7).First(day => day % 2 == 0 && start.AddDays(day) != today);
                         var total = Assert.IsType<Border>(totals.Children[oneLogDay + 1]);
                         var run = Assert.IsType<System.Windows.Documents.Run>(Assert.IsType<TextBlock>(total.Child).Inlines.FirstInline);
@@ -320,12 +727,14 @@ public class WindowSmokeTests
     {
         var started = new DateTimeOffset(DateTime.Today.AddHours(9));
         var original = new JiraWorklog("123", issue.Key, started, 60, "Tester", "Original description");
-        var client = new NullJiraClient { Worklogs = [original] };
+        var client = new NullJiraClient { Worklogs = [original], FailDiscovery = true };
         var calendar = new WorklogCalendarWindow(issue, client, () => [], resolutionMinutes: 5);
         try
         {
             calendar.Show();
             calendar.RefreshAsync().GetAwaiter().GetResult();
+            var warning = (TextBlock)calendar.FindName("LoadWarningText");
+            Assert.Equal(Visibility.Visible, warning.Visibility);
             calendar.UpdateLayout();
             var scroll = CalendarField<ScrollViewer>(calendar, "_timeScroll");
             scroll.ScrollToVerticalOffset(1500);
@@ -394,7 +803,11 @@ public class WindowSmokeTests
                 calendar.UpdateLayout();
                 Assert.Equal(offset, CalendarField<ScrollViewer>(calendar, "_timeScroll").VerticalOffset, 1);
                 Assert.Equal(moved ? 600 : 1200, client.Worklogs!.Single().TimeSpentSeconds);
+                Assert.Equal(Visibility.Visible, warning.Visibility);
             }
+            client.FailDiscovery = false;
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal(Visibility.Collapsed, warning.Visibility);
 
             // A concurrent server edit must leave the editor open and avoid another PUT.
             client.Worklogs = [original with { TimeSpentSeconds = 120 }];
@@ -548,20 +961,42 @@ public class WindowSmokeTests
 
     private sealed class NullJiraClient : IJiraClient
     {
+        public IReadOnlyList<JiraIssue> QueueIssues { get; set; } = [];
+        public IReadOnlyList<JiraQueue> Queues { get; init; } = [];
+        public Func<string, CancellationToken, Task<IReadOnlyList<JiraIssue>>>? BrowseIssues { get; init; }
+        public Task<IReadOnlyList<JiraQueue>> GetQueuesAsync(CancellationToken ct = default) => Task.FromResult(Queues);
+        public Task<IReadOnlyList<JiraIssue>> BrowseIssuesAsync(string jql, IReadOnlyList<JiraPriority> priorities,
+            CancellationToken ct = default) => BrowseIssues?.Invoke(jql, ct) ?? SearchAsync(jql, priorities, ct);
+        public IReadOnlyList<JiraIssueLookup> AddedLookups { get; set; } = [];
+        public IReadOnlyList<string> RequestedAddedKeys { get; private set; } = [];
         public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }
+        public IReadOnlyList<JiraIssue> Discovered { get; set; } = [];
+        public bool FailDiscovery { get; set; }
+        public DateOnly? DiscoveryUntil { get; private set; }
         public JiraWorklog? UpdatedWorklog { get; set; }
         public int UpdatedSeconds { get; private set; }
         public (string IssueKey, string WorklogId, string Text)? AddedWorklogComment { get; private set; }
-        public JiraConnection Connection { get; } = new(new Uri("https://example.atlassian.net/"), "a@b.c", "t");
-        public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public JiraConnection Connection { get; init; } = new(new Uri("https://example.atlassian.net/"), "a@b.c", "t");
+        public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => Task.FromResult(new JiraUser("test-account", "Tester", null));
+        public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until, CancellationToken ct = default)
+        {
+            DiscoveryUntil = until;
+            return FailDiscovery ? throw new HttpRequestException("search unavailable") : Task.FromResult(Discovered);
+        }
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) =>
             Task.FromResult(JiraDurationSettings.Default);
-        public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<JiraPriority>>([]);
+        public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) => Task.FromResult(QueueIssues);
+        public Task<IReadOnlyList<JiraIssueLookup>> FetchIssuesByKeyAsync(IReadOnlyList<string> keys, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default)
+        {
+            RequestedAddedKeys = keys;
+            return Task.FromResult(AddedLookups);
+        }
         public Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default) => Task.FromResult<JiraSla?>(null);
         public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) =>
             Worklogs is null ? throw new NotSupportedException()
-                : Task.FromResult<IReadOnlyList<JiraWorklog>>(Worklogs.Where(worklog => worklog.IssueKey == issueKey).ToList());
+                : Task.FromResult<IReadOnlyList<JiraWorklog>>(Worklogs.Where(worklog => worklog.IssueKey == issueKey)
+                    .Select(worklog => worklog with { AuthorAccountId = worklog.AuthorAccountId ?? "test-account" }).ToList());
         public Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal, int timeSpentSeconds, CancellationToken ct = default)
         {

@@ -3,127 +3,233 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="Jira TaskBar – Settings"
-                 Width="560" SizeToContent="Height" MaxHeight="{x:Static SystemParameters.MaximizedPrimaryScreenHeight}"
-                 ResizeMode="NoResize"
+                 Width="760" Height="640" MinWidth="600" MinHeight="400"
                  WindowStartupLocation="CenterScreen"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica"
                  WindowCornerPreference="Round">
+    <ui:FluentWindow.Resources>
+        <Style x:Key="SettingsTabScroll" TargetType="ScrollViewer">
+            <Setter Property="Padding" Value="16,10,12,10" />
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+        </Style>
+    </ui:FluentWindow.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <ui:TitleBar Title="Jira TaskBar – Settings" ShowMaximize="False" ShowMinimize="False" />
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="20,8,20,20">
-            <TextBlock x:Name="IntroText" TextWrapping="Wrap" Opacity="0.8" Margin="0,0,0,12"
-                       Text="Connect to Jira Cloud with your Atlassian account email and an API token." />
+        <TabControl x:Name="SettingsTabs" Grid.Row="1" Margin="16,8,16,8" TabStripPlacement="Left"
+                    AutomationProperties.Name="Settings categories">
+            <TabItem x:Name="JiraTab" Header="Jira connection">
+                <ScrollViewer Style="{StaticResource SettingsTabScroll}">
+                    <StackPanel>
+                        <TextBlock x:Name="IntroText" TextWrapping="Wrap" Opacity="0.8" Margin="0,0,0,12"
+                                   Text="Connect to Jira Cloud with your Atlassian account email and an API token." />
 
-            <TextBlock Text="Jira site" FontWeight="SemiBold" />
-            <ui:TextBox x:Name="SiteBox" Margin="0,4,0,10" PlaceholderText="yourcompany.atlassian.net" />
+                        <Label Content="Authentication _method" Target="{Binding ElementName=AuthenticationBox}" Padding="0" FontWeight="SemiBold" />
+                        <ComboBox x:Name="AuthenticationBox" Margin="0,4,0,10" SelectionChanged="Authentication_Changed">
+                            <ComboBoxItem Content="Jira Cloud API token" />
+                            <ComboBoxItem Content="Jira Data Center username and password" />
+                        </ComboBox>
 
-            <TextBlock Text="Email" FontWeight="SemiBold" />
-            <ui:TextBox x:Name="EmailBox" Margin="0,4,0,10" PlaceholderText="you@company.com" />
+                        <TextBlock Text="Jira site" FontWeight="SemiBold" />
+                        <ui:TextBox x:Name="SiteBox" Margin="0,4,0,10" PlaceholderText="yourcompany.atlassian.net"
+                                    TextChanged="SiteBox_TextChanged"
+                                    ToolTip="The Jira Cloud site to connect to, for example yourcompany.atlassian.net." />
 
-            <DockPanel>
-                <TextBlock Text="API token" FontWeight="SemiBold" />
-                <TextBlock HorizontalAlignment="Right">
-                    <Hyperlink Click="CreateToken_Click">Create an API token…</Hyperlink>
-                </TextBlock>
-            </DockPanel>
-            <PasswordBox x:Name="TokenBox" Margin="0,4,0,2" />
-            <TextBlock x:Name="TokenHint" FontSize="11" Opacity="0.65" Margin="0,0,0,6"
-                       Text="Stored in Windows Credential Manager. Leave blank to keep the saved token." />
+                        <Label x:Name="LoginLabel" Content="_Email" Target="{Binding ElementName=EmailBox}" Padding="0" FontWeight="SemiBold" />
+                        <ui:TextBox x:Name="EmailBox" Margin="0,4,0,10" PlaceholderText="you@company.com"
+                                    ToolTip="The Atlassian account email that owns the API token." />
 
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                <RadioButton x:Name="ScopedRadio" GroupName="TokenType" Margin="0,0,16,0" Checked="TokenType_Changed"
-                             Content="Scoped token (recommended)"
-                             ToolTip="Limited to Jira work items. Calls go through api.atlassian.com." />
-                <RadioButton x:Name="ClassicRadio" GroupName="TokenType" Checked="TokenType_Changed"
-                             Content="Classic token"
-                             ToolTip="Has all of your Atlassian permissions, including Confluence." />
-            </StackPanel>
-            <StackPanel x:Name="ScopedPanel" Margin="0,0,0,10">
-                <TextBlock FontSize="11" Opacity="0.75" TextWrapping="Wrap">
-                    <Run Text="When creating it, choose" />
-                    <Run FontWeight="SemiBold" Text="Create API token with scopes" />
-                    <Run Text="→ Jira, and select:" />
-                    <Run x:Name="ScopesRun" FontFamily="Consolas" />
-                </TextBlock>
-                <TextBlock FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,0">
-                    <Run Text="SLA lookup uses read:jira-work or the granular scope" />
-                    <Run x:Name="SlaScopeRun" FontFamily="Consolas" />
-                    <Run Text="and needs permission to view the Jira service request." />
-                </TextBlock>
-                <TextBlock Text="Cloud ID" FontWeight="SemiBold" Margin="0,6,0,0" />
-                <ui:TextBox x:Name="CloudIdBox" Margin="0,4,0,2" FontFamily="Consolas"
-                            PlaceholderText="Found automatically from the site – or paste it from admin.atlassian.com" />
-            </StackPanel>
-            <TextBlock x:Name="ClassicWarning" FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap" Foreground="#F5A623"
-                       Text="A classic token can do anything you can do in Atlassian Cloud, including Confluence. If it leaks, all of that is exposed – prefer a scoped token." />
+                        <DockPanel>
+                            <Label x:Name="SecretLabel" Content="API _token" Target="{Binding ElementName=TokenBox}" Padding="0" FontWeight="SemiBold" />
+                            <TextBlock x:Name="CreateTokenLink" HorizontalAlignment="Right">
+                                <Hyperlink Click="CreateToken_Click">Create an API token…</Hyperlink>
+                            </TextBlock>
+                        </DockPanel>
+                        <PasswordBox x:Name="TokenBox" Margin="0,4,0,2"
+                                     ToolTip="Paste a Jira API token. Leave this blank to reuse the token already saved for this site." />
+                        <TextBlock x:Name="TokenHint" FontSize="11" Opacity="0.65" Margin="0,0,0,6"
+                                   Text="Stored in Windows Credential Manager. Leave blank to keep the saved token." />
 
-            <TextBlock Text="Tickets to show (JQL)" FontWeight="SemiBold" />
-            <ui:TextBox x:Name="JqlBox" Margin="0,4,0,2" AcceptsReturn="True" TextWrapping="Wrap" MinLines="2"
-                        FontFamily="Consolas" />
-            <TextBlock FontSize="11" Opacity="0.65" Margin="0,0,0,10" TextWrapping="Wrap"
-                       Text="Buttons are always ordered by priority (highest first), then by key." />
+                        <StackPanel x:Name="TokenTypePanel" Orientation="Horizontal" Margin="0,0,0,4">
+                            <RadioButton x:Name="ScopedRadio" GroupName="TokenType" Margin="0,0,16,0" Checked="TokenType_Changed"
+                                         Content="Scoped token (recommended)"
+                                         ToolTip="Limited to Jira work items. Calls go through api.atlassian.com." />
+                            <RadioButton x:Name="ClassicRadio" GroupName="TokenType" Checked="TokenType_Changed"
+                                         Content="Classic token"
+                                         ToolTip="Has all of your Atlassian permissions, including Confluence." />
+                        </StackPanel>
+                        <StackPanel x:Name="ScopedPanel" Margin="0,0,0,10">
+                            <TextBlock FontSize="11" Opacity="0.75" TextWrapping="Wrap">
+                                <Run Text="When creating it, choose" />
+                                <Run FontWeight="SemiBold" Text="Create API token with scopes" />
+                                <Run Text="→ Jira, and select:" />
+                                <Run x:Name="ScopesRun" FontFamily="Consolas" />
+                            </TextBlock>
+                            <TextBlock FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,0">
+                                <Run Text="SLA lookup uses read:jira-work or the granular scope" />
+                                <Run x:Name="SlaScopeRun" FontFamily="Consolas" />
+                                <Run Text="and needs permission to view the Jira service request." />
+                            </TextBlock>
+                            <TextBlock Text="Cloud ID" FontWeight="SemiBold" Margin="0,6,0,0" />
+                            <ui:TextBox x:Name="CloudIdBox" Margin="0,4,0,2" FontFamily="Consolas"
+                                        ToolTip="The Jira Cloud site ID used to route requests made with a scoped API token."
+                                        PlaceholderText="Found automatically from the site – or paste it from admin.atlassian.com" />
+                        </StackPanel>
+                        <TextBlock x:Name="ClassicWarning" FontSize="11" Margin="0,0,0,10" TextWrapping="Wrap" Foreground="#F5A623"
+                                   Text="A classic token can do anything you can do in Atlassian Cloud, including Confluence. If it leaks, all of that is exposed – prefer a scoped token." />
+                        <ui:Button x:Name="ForgetSignInButton" Content="Forget saved sign-in…" Click="ForgetSignIn_Click" Margin="0,0,0,10" />
 
-            <Grid Margin="0,0,0,10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="16" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <StackPanel>
-                    <TextBlock Text="Refresh every (minutes)" FontWeight="SemiBold" />
-                    <ui:NumberBox x:Name="RefreshBox" Margin="0,4,0,0" Minimum="1" Maximum="120" SmallChange="1" MaxDecimalPlaces="0" />
-                </StackPanel>
-                <StackPanel Grid.Column="2">
-                    <TextBlock Text="Ask about time away after (minutes)" FontWeight="SemiBold" />
-                    <ui:NumberBox x:Name="IdleBox" Margin="0,4,0,0" Minimum="0" Maximum="480" SmallChange="5" MaxDecimalPlaces="0"
-                                  ToolTip="When the PC was locked or asleep this long while a timer ran, ask whether to keep that time. 0 = never ask." />
-                </StackPanel>
-            </Grid>
+                        <TextBlock Text="Tickets to show (JQL)" FontWeight="SemiBold" />
+                        <ui:TextBox x:Name="JqlBox" Margin="0,4,0,2" AcceptsReturn="True" TextWrapping="Wrap" MinLines="2"
+                                    FontFamily="Consolas" ToolTip="The Jira Query Language filter that selects which tickets appear on the bar." />
+                        <TextBlock Text="Refresh every (minutes)" FontWeight="SemiBold" Margin="0,8,0,0" />
+                        <ui:NumberBox x:Name="RefreshBox" Margin="0,4,0,0" Minimum="1" Maximum="120" SmallChange="1"
+                                      MaxDecimalPlaces="0" ToolTip="How often the bar refreshes ticket information from Jira." />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
 
-            <TextBlock Text="Sessions shorter than one minute" FontWeight="SemiBold" />
-            <ComboBox x:Name="ShortSessionBox" Margin="0,4,0,10">
-                <ComboBoxItem Content="Log as 1 minute" />
-                <ComboBoxItem Content="Don't log" />
-            </ComboBox>
+            <TabItem x:Name="AddTicketsTab" Header="Add tickets">
+                <ScrollViewer Style="{StaticResource SettingsTabScroll}">
+                    <StackPanel>
+                        <Label Content="Pinned ticket _keys" Target="{Binding ElementName=AdditionalTicketsBox}"
+                               Padding="0" FontWeight="SemiBold" />
+                        <TextBlock Text="Enter ticket keys for the selected Jira site. Pinned tickets appear above the queue in the order shown here. Remove a key to unpin it."
+                                   TextWrapping="Wrap" Opacity="0.75" Margin="0,4,0,0" />
+                        <ui:TextBox x:Name="AdditionalTicketsBox" Margin="0,8,0,0" AcceptsReturn="True" MinLines="4" MaxLines="12"
+                                    VerticalScrollBarVisibility="Auto" FontFamily="Consolas"
+                                    ToolTip="Enter keys such as ABC-123, one per line or separated by commas. Taskbar filters apply to pinned tickets." />
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0" IsEnabled="{Binding ElementName=AdditionalTicketsBox, Path=IsEnabled}">
+                            <ui:Button x:Name="MoveTicketLineUp" Content="Move line up" Click="MoveTicketLineUp_Click" Margin="0,0,8,0"
+                                       ToolTip="Move the line containing the text cursor before the previous line of keys." />
+                            <ui:Button x:Name="MoveTicketLineDown" Content="Move line down" Click="MoveTicketLineDown_Click"
+                                       ToolTip="Move the line containing the text cursor after the next line of keys." />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
 
-            <TextBlock Text="Calendar time resolution" FontWeight="SemiBold" />
-            <ComboBox x:Name="CalendarResolutionBox" Margin="0,4,0,10"
-                      ToolTip="Day and Week calendar rows, selections, and edits snap to this interval." />
+            <TabItem x:Name="TicketsTab" Header="Tickets">
+                <ScrollViewer Style="{StaticResource SettingsTabScroll}">
+                    <StackPanel>
+                        <ui:ToggleSwitch x:Name="ShowTitlesSwitch" Margin="0,0,0,12"
+                                         Content="Show ticket titles on the bar"
+                                         ToolTip="Off: buttons show only the ticket key; hover to see the title." />
+                        <TextBlock Text="Pinned tickets appear first. Queue tickets are ordered by Jira priority, then by key. Taskbar filters apply to all tickets."
+                                   TextWrapping="Wrap" Opacity="0.75" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
 
-            <TextBlock Text="Daily worklog target in minutes (optional)" FontWeight="SemiBold" />
-            <ui:NumberBox x:Name="DailyTargetBox" Margin="0,4,0,10" Minimum="0" Maximum="1440"
-                          SmallChange="15" MaxDecimalPlaces="0" ToolTip="Leave empty or enter zero to turn off the target." />
+            <TabItem x:Name="WorklogsTab" Header="Worklogs">
+                <ScrollViewer Style="{StaticResource SettingsTabScroll}">
+                    <StackPanel>
+                        <TextBlock Text="Sessions shorter than one minute" FontWeight="SemiBold" />
+                        <ComboBox x:Name="ShortSessionBox" Margin="0,4,0,10"
+                                  ToolTip="Choose whether to skip sessions shorter than one minute or round them up to one minute in Jira.">
+                            <ComboBoxItem Content="Log as 1 minute" />
+                            <ComboBoxItem Content="Don't log" />
+                        </ComboBox>
 
-            <TextBlock Text="Worklog colors by project and issue type" FontWeight="SemiBold" />
-            <TextBlock Margin="0,4,0,0" Text="Enter one rule per line, for example IT / Incident = #3866A8."
-                       TextWrapping="Wrap" Opacity="0.75" />
-            <TextBox x:Name="WorklogColorsBox" Margin="0,4,0,10" AcceptsReturn="True" MinLines="2"
-                     MaxLines="5" VerticalScrollBarVisibility="Auto" />
+                        <TextBlock Text="Daily worklog target in minutes (optional)" FontWeight="SemiBold" />
+                        <ui:NumberBox x:Name="DailyTargetBox" Margin="0,4,0,10" Minimum="0" Maximum="1440"
+                                      SmallChange="15" MaxDecimalPlaces="0" ToolTip="Leave empty or enter zero to turn off the target." />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
 
-            <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,8" />
-            <ui:ToggleSwitch x:Name="HideFromCaptureSwitch" Margin="0,0,0,8"
-                             Content="Hide the bar from screen sharing and recordings"
-                             ToolTip="You still see the bar; Teams, Zoom, screenshots and recordings don't. Ticket titles and tooltips stay private during calls." />
-            <ui:ToggleSwitch x:Name="ShowTitlesSwitch" Margin="0,0,0,12"
-                             Content="Show ticket titles on the bar"
-                             ToolTip="Off: buttons show only the ticket key; hover to see the title." />
+            <TabItem x:Name="WorkWeekTab" Header="Work week and time">
+                <ScrollViewer Style="{StaticResource SettingsTabScroll}">
+                    <StackPanel>
+                        <TextBlock Text="First day of the calendar week" FontWeight="SemiBold" />
+                        <ComboBox x:Name="CalendarFirstDayBox" Margin="0,4,0,10"
+                                  ToolTip="Sets the first day shown in the weekly calendar and used for weekly totals." />
 
+                        <TextBlock Text="Working days" FontWeight="SemiBold" />
+                        <WrapPanel x:Name="WorkdaysPanel" Margin="0,4,0,4" />
+
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="16" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <Label Content="Workday _start (HH:mm)" Target="{Binding ElementName=WorkStartBox}" Padding="0" FontWeight="SemiBold" />
+                                <TextBox x:Name="WorkStartBox" Margin="0,4,0,0" MaxLength="5"
+                                         ToolTip="The local time when the workday starts, for example 09:00." />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <Label Content="Workday _end (HH:mm)" Target="{Binding ElementName=WorkEndBox}" Padding="0" FontWeight="SemiBold" />
+                                <TextBox x:Name="WorkEndBox" Margin="0,4,0,0" MaxLength="5"
+                                         ToolTip="The local time when the workday ends. Enter 24:00 to end at midnight." />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem x:Name="CalendarTab" Header="Calendar view">
+                <ScrollViewer Style="{StaticResource SettingsTabScroll}">
+                    <StackPanel>
+                        <TextBlock Text="Calendar time resolution" FontWeight="SemiBold" />
+                        <ComboBox x:Name="CalendarResolutionBox" Margin="0,4,0,10"
+                                  ToolTip="Day and Week calendar rows, selections, and edits snap to this interval." />
+
+                        <CheckBox x:Name="OnlyWorkdaysBox" Content="Show only working days" Margin="0,0,0,10"
+                                  ToolTip="Hide other days in the calendar. Week and month totals still include all logged time in the period." />
+                        <CheckBox x:Name="OnlyWorkHoursBox" Content="Show only working hours in Day and Week" Margin="0,0,0,10"
+                                  ToolTip="Hide hours outside your workday in Day and Week. Totals still include time logged outside the displayed hours." />
+
+                        <TextBlock Text="Worklog colors by project and issue type" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,4,0,0" Text="Enter one rule per line, for example IT / Incident = #3866A8."
+                                   TextWrapping="Wrap" Opacity="0.75" />
+                        <TextBox x:Name="WorklogColorsBox" Margin="0,4,0,10" AcceptsReturn="True" MinLines="2"
+                                 MaxLines="5" VerticalScrollBarVisibility="Auto"
+                                 ToolTip="Set a calendar worklog color for each project and issue type you list." />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem x:Name="ContextTab" Header="Context switching">
+                <ScrollViewer Style="{StaticResource SettingsTabScroll}">
+                    <StackPanel>
+                        <Label Content="Ask about time _away after (minutes)" Target="{Binding ElementName=IdleBox}"
+                               Padding="0" FontWeight="SemiBold" />
+                        <ui:NumberBox x:Name="IdleBox" Margin="0,4,0,0" Minimum="0" Maximum="480" SmallChange="5"
+                                      MaxDecimalPlaces="0"
+                                      ToolTip="When the PC was locked or asleep this long while a timer ran, ask whether to keep that time. Enter 0 to disable the prompt." />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem x:Name="WindowsTab" Header="Windows">
+                <ScrollViewer Style="{StaticResource SettingsTabScroll}">
+                    <StackPanel>
+                        <ui:ToggleSwitch x:Name="StartupSwitch" Content="Start with Windows" Margin="0,0,0,8"
+                                         ToolTip="Launch Jira TaskBar when you sign in to Windows." />
+                        <ui:ToggleSwitch x:Name="HideFromCaptureSwitch" Margin="0,0,0,8"
+                                         Content="Hide the bar from screen sharing and recordings"
+                                         ToolTip="You still see the bar; Teams, Zoom, screenshots and recordings don't. Ticket titles and tooltips stay private during calls." />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <StackPanel Grid.Row="2" Margin="20,0,20,16">
             <ui:InfoBar x:Name="Status" IsClosable="False" IsOpen="False" Margin="0,0,0,12" />
-
             <DockPanel LastChildFill="False">
                 <ui:Button x:Name="TestButton" Content="Test connection" Click="Test_Click" DockPanel.Dock="Left" />
                 <ui:Button Content="Cancel" Click="Cancel_Click" DockPanel.Dock="Right" Margin="8,0,0,0" />
                 <ui:Button x:Name="SaveButton" Content="Save" Appearance="Primary" Click="Save_Click" DockPanel.Dock="Right" IsDefault="True" />
             </DockPanel>
         </StackPanel>
-        </ScrollViewer>
     </Grid>
 </ui:FluentWindow>

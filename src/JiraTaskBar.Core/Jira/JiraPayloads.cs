@@ -22,14 +22,16 @@ public static class JiraPayloads
     }
 
     public static JsonObject Worklog(DateTimeOffset startedLocal, int timeSpentSeconds, string? comment,
-        JsonNode? commentDocument = null)
+        JsonNode? commentDocument = null, bool usePlainText = false)
     {
         var body = new JsonObject
         {
             ["started"] = FormatJiraDate(startedLocal),
             ["timeSpentSeconds"] = timeSpentSeconds,
         };
-        if (commentDocument is not null)
+        if (usePlainText && comment is not null)
+            body["comment"] = comment;
+        else if (commentDocument is not null)
             body["comment"] = commentDocument.DeepClone();
         else if (!string.IsNullOrWhiteSpace(comment))
             body["comment"] = PlainTextAdf(comment);
@@ -100,42 +102,43 @@ public static class JiraPayloads
     public static (IReadOnlyList<JiraIssue> Issues, string? NextPageToken) ParseSearch(
         JsonNode? node, IReadOnlyDictionary<string, JiraPriority> prioritiesById)
     {
-        var issues = new List<JiraIssue>();
-        foreach (var item in node?["issues"] as JsonArray ?? [])
-        {
-            if (item is null) continue;
-            var fields = item["fields"];
-            JiraPriority? priority = null;
-            var priorityNode = fields?["priority"];
-            if (priorityNode is not null)
-            {
-                var pid = priorityNode["id"]?.GetValue<string>() ?? string.Empty;
-                priority = prioritiesById.TryGetValue(pid, out var known)
-                    ? known
-                    : new JiraPriority(pid, priorityNode["name"]?.GetValue<string>() ?? pid, int.MaxValue - 1);
-            }
-
-            issues.Add(new JiraIssue(
-                Key: item["key"]?.GetValue<string>() ?? string.Empty,
-                Summary: fields?["summary"]?.GetValue<string>() ?? string.Empty,
-                Priority: priority,
-                Status: fields?["status"]?["name"]?.GetValue<string>() ?? string.Empty,
-                ProjectTypeKey: fields?["project"]?["projectTypeKey"]?.GetValue<string>() ?? string.Empty,
-                IssueType: fields?["issuetype"]?["name"]?.GetValue<string>() ?? string.Empty,
-                IssueTypeAvatarId: AvatarId(fields?["issuetype"]),
-                RemainingEstimateSeconds: fields?["timeestimate"]?.GetValue<int>(),
-                CreatedAt: DateTimeOffset.TryParse(fields?["created"]?.GetValue<string>(), CultureInfo.InvariantCulture,
-                    DateTimeStyles.None, out var created) ? created : null,
-                DueDate: DateOnly.TryParseExact(fields?["duedate"]?.GetValue<string>(), "yyyy-MM-dd", CultureInfo.InvariantCulture,
-                    DateTimeStyles.None, out var due) ? due : null));
-        }
-
+        var issues = (node?["issues"] as JsonArray ?? []).OfType<JsonNode>()
+            .Select(item => ParseIssue(item, prioritiesById)).ToList();
         var isLast = node?["isLast"]?.GetValue<bool>() ?? true;
         var next = isLast ? null : node?["nextPageToken"]?.GetValue<string>();
         return (issues, next);
     }
 
-    public static (IReadOnlyList<JiraWorklog> Worklogs, int Total, int ReturnedCount) ParseWorklogs(JsonNode? node, string issueKey)
+    public static JiraIssue ParseIssue(JsonNode item, IReadOnlyDictionary<string, JiraPriority> prioritiesById)
+    {
+        var fields = item["fields"];
+        JiraPriority? priority = null;
+        var priorityNode = fields?["priority"];
+        if (priorityNode is not null)
+        {
+            var pid = priorityNode["id"]?.GetValue<string>() ?? string.Empty;
+            priority = prioritiesById.TryGetValue(pid, out var known)
+                ? known
+                : new JiraPriority(pid, priorityNode["name"]?.GetValue<string>() ?? pid, int.MaxValue - 1);
+        }
+
+        return new JiraIssue(
+            Key: item["key"]?.GetValue<string>() ?? string.Empty,
+            Summary: fields?["summary"]?.GetValue<string>() ?? string.Empty,
+            Priority: priority,
+            Status: fields?["status"]?["name"]?.GetValue<string>() ?? string.Empty,
+            ProjectTypeKey: fields?["project"]?["projectTypeKey"]?.GetValue<string>() ?? string.Empty,
+            IssueType: fields?["issuetype"]?["name"]?.GetValue<string>() ?? string.Empty,
+            IssueTypeAvatarId: AvatarId(fields?["issuetype"]),
+            RemainingEstimateSeconds: fields?["timeestimate"]?.GetValue<int>(),
+            CreatedAt: DateTimeOffset.TryParse(fields?["created"]?.GetValue<string>(), CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var created) ? created : null,
+            DueDate: DateOnly.TryParseExact(fields?["duedate"]?.GetValue<string>(), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var due) ? due : null);
+    }
+
+    public static (IReadOnlyList<JiraWorklog> Worklogs, int Total, int ReturnedCount) ParseWorklogs(JsonNode? node, string issueKey,
+        bool isDataCenter = false)
     {
         var result = new List<JiraWorklog>();
         var items = node?["worklogs"] as JsonArray ?? [];
@@ -152,7 +155,10 @@ public static class JiraPayloads
                 item["timeSpentSeconds"]?.GetValue<int>() ?? 0,
                 item["author"]?["displayName"]?.GetValue<string>() ?? string.Empty,
                 AdfText(item["comment"]),
-                item["comment"]?.DeepClone()));
+                item["comment"]?.DeepClone())
+            {
+                AuthorAccountId = item["author"]?[isDataCenter ? "name" : "accountId"]?.GetValue<string>(),
+            });
         }
         return (result, node?["total"]?.GetValue<int>() ?? items.Count, items.Count);
     }
@@ -160,6 +166,7 @@ public static class JiraPayloads
     private static string? AdfText(JsonNode? node)
     {
         if (node is null) return null;
+        if (node is JsonValue value && value.TryGetValue<string>(out var plain)) return plain;
         var textBuilder = new StringBuilder();
         CollectText(node, textBuilder);
         var text = textBuilder.ToString().TrimEnd();

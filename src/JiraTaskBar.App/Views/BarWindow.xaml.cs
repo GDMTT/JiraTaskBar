@@ -151,6 +151,33 @@ public partial class BarWindow : Window
         _ticketDragTicket = (sender as FrameworkElement)?.DataContext as TicketViewModel;
     }
 
+    private void BrowserTicket_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetData(QueueBrowserWindow.TicketDragFormat, autoConvert: false) is string key &&
+            _app.CanDropBrowserTicket(key) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void BrowserTicket_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(QueueBrowserWindow.TicketDragFormat, autoConvert: false) is not string key ||
+            !_app.CanDropBrowserTicket(key)) return;
+        var (anchor, after) = GetBrowserDropTarget(e.OriginalSource as DependencyObject, e.GetPosition);
+        _app.DropBrowserTicket(key, anchor, after);
+        e.Effects = DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    internal (string? Anchor, bool After) GetBrowserDropTarget(DependencyObject? source, Func<FrameworkElement, Point> position)
+    {
+        if (source is null || ItemsControl.ContainerFromElement(TicketItems, source) is not FrameworkElement target ||
+            target.DataContext is not TicketViewModel ticket) return (null, false);
+        return (ticket.Key, IsAfterTicketMidpoint(position(target), target.RenderSize, _vm.Orientation));
+    }
+
+    internal static bool IsAfterTicketMidpoint(Point point, Size size, Orientation orientation) =>
+        orientation == Orientation.Horizontal ? point.X >= size.Width / 2 : point.Y >= size.Height / 2;
+
     private void Ticket_PreviewMouseMove(object sender, MouseEventArgs e)
     {
         if (e.LeftButton != MouseButtonState.Pressed || _ticketDragTicket is not { } ticket) return;

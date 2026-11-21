@@ -37,10 +37,13 @@ public sealed class AppController : IDisposable
     private HttpClient? _http;
     private IReadOnlyList<JiraPriority>? _priorities;
     private JiraDurationSettings? _durationSettings;
+    private IJiraClient? _additionalTicketClient;
+    private Dictionary<string, JiraIssue> _additionalTicketCache = new(StringComparer.OrdinalIgnoreCase);
     private TaskbarIcon? _tray;
     private BarWindow? _bar;
     private ContextReportWindow? _contextReportWindow;
     private AboutWindow? _aboutWindow;
+    private QueueBrowserWindow? _queueBrowser;
     private DateTimeOffset _lastHeartbeat;
     private DateTimeOffset? _awaySinceUtc;
     private bool _awayPromptOpen;
@@ -146,6 +149,7 @@ public sealed class AppController : IDisposable
         // and disposing that client so reopening always uses the current connection.
         _worklogWindow?.Close();
         _worklogWindow = null;
+        _queueBrowser?.Close();
         _http?.Dispose();
         _http = null;
         Client = null;
@@ -154,13 +158,13 @@ public sealed class AppController : IDisposable
         _durationSettings = null;
         Icons.Reset();
 
-        if (_credentials is null || TrySite() is not { } site) return;
+        if (_credentials is null) return;
 
         _http = JiraClient.CreateHttpClient();
         try
         {
             // A cloud ID means a scoped token: calls go through api.atlassian.com instead of the site.
-            Client = new JiraClient(_http, new JiraConnection(site, _credentials.Email, _credentials.ApiToken, _credentials.CloudId));
+            Client = new JiraClient(_http, _credentials.CreateConnection());
         }
         catch (ArgumentException ex)
         {
@@ -239,17 +243,17 @@ public sealed class AppController : IDisposable
         return credentials;
     }
 
-    /// <summary>The stored site, or null if there is none or it isn't an https Jira Cloud site.</summary>
+    /// <summary>The HTTPS Jira base URL from the saved credential.</summary>
     private Uri? TrySite()
     {
         if (_credentials is null) return null;
         try
         {
-            return JiraConnection.NormalizeSiteUrl(_credentials.SiteUrl);
+            return JiraConnection.NormalizeConnectionSite(_credentials.SiteUrl, _credentials.IsDataCenter);
         }
         catch (ArgumentException ex)
         {
-            Log.Error($"Ignoring stored Jira site '{_credentials.SiteUrl}': {ex.Message}");
+            Log.Error("Ignoring an invalid stored Jira site", ex);
             return null;
         }
     }
@@ -274,10 +278,18 @@ public sealed class AppController : IDisposable
         }
     }
 
-    public async Task<IReadOnlyList<JiraIssue>> FetchIssuesAsync()
+    public async Task<(IReadOnlyList<JiraIssue> Issues, int PinnedCount, string? Warning)> FetchIssuesAsync()
     {
         var client = Client ?? throw new InvalidOperationException("Not connected to Jira.");
-        _priorities ??= await client.GetPrioritiesAsync();
+        var settings = Settings;
+        if (!ReferenceEquals(client, _additionalTicketClient))
+        {
+            _additionalTicketClient = client;
+            _additionalTicketCache = new(StringComparer.OrdinalIgnoreCase);
+        }
+        var additionalTicketCache = _additionalTicketCache;
+        if (_priorities is null && client.Connection.IsDataCenter) await client.GetMyselfAsync();
+        var priorities = _priorities ??= await client.GetPrioritiesAsync();
         try
         {
             _durationSettings ??= await client.GetTimeTrackingConfigurationAsync();
@@ -288,7 +300,51 @@ public sealed class AppController : IDisposable
             // Duration metadata is optional. Keep it uncached so a later refresh can retry.
             Log.Error("Could not load Jira duration settings; using default duration units", ex);
         }
-        return await client.SearchAsync(Settings.Jql, _priorities);
+        var issues = await client.SearchAsync(settings.Jql, priorities);
+        var configuredKeys = (settings.AdditionalTicketKeysBySite?.GetValueOrDefault(client.Connection.SiteUrl.AbsoluteUri) ?? [])
+            .Where(key => !string.IsNullOrWhiteSpace(key)).ToArray();
+        var additionalKeys = configuredKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var obsoleteKey in additionalTicketCache.Keys.Where(key => !additionalKeys.Contains(key)).ToArray())
+            additionalTicketCache.Remove(obsoleteKey);
+        if (additionalKeys.Count == 0) return (issues, 0, null);
+
+        foreach (var issue in issues)
+            if (additionalKeys.Remove(issue.Key)) additionalTicketCache[issue.Key] = issue;
+
+        IReadOnlyList<JiraIssueLookup> lookups = additionalKeys.Count == 0
+            ? [] : await client.FetchIssuesByKeyAsync(additionalKeys.ToArray(), priorities);
+        var failed = 0;
+        var retained = 0;
+        foreach (var lookup in lookups)
+        {
+            if (lookup.Issue is { } issue)
+                additionalTicketCache[lookup.RequestedKey] = issue;
+            else
+            {
+                failed++;
+                if (lookup.CanRetry)
+                {
+                    if (additionalTicketCache.ContainsKey(lookup.RequestedKey)) retained++;
+                }
+                else additionalTicketCache.Remove(lookup.RequestedKey);
+            }
+        }
+        var currentByKey = issues.Concat(lookups.Select(lookup => lookup.Issue).OfType<JiraIssue>())
+            .GroupBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var pinned = configuredKeys.Select(key => additionalTicketCache.GetValueOrDefault(key)).OfType<JiraIssue>()
+            .Select(issue => currentByKey.GetValueOrDefault(issue.Key, issue));
+        var displayedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var distinctPins = pinned.Where(issue => displayedKeys.Add(issue.Key)).ToArray();
+        var allIssues = distinctPins.Concat(issues.Where(issue => displayedKeys.Add(issue.Key))).ToArray();
+        var warning = failed switch
+        {
+            0 => null,
+            1 => "Could not refresh one added ticket.",
+            _ => $"Could not refresh {failed} added tickets.",
+        };
+        if (retained > 0) warning += $" Showing previously loaded details for {retained} added ticket(s).";
+        return (allIssues, distinctPins.Length, warning);
     }
 
     public void ToggleTimer(string key) => Tracker.Toggle(key);
@@ -556,6 +612,7 @@ public sealed class AppController : IDisposable
     {
         menu.Items.Clear();
         menu.Items.Add(Item("Refresh tickets", SymbolRegular.ArrowSync24, async () => await Bar.RefreshAsync()));
+        menu.Items.Add(Item("Browse queues…", null, OpenQueueBrowser));
 
         if (Tracker.Active is { } active)
             menu.Items.Add(Item($"Stop timer ({active.Key})", SymbolRegular.Stop24, () => Tracker.Stop()));
@@ -650,6 +707,59 @@ public sealed class AppController : IDisposable
 
     private void OpenSettings() => OpenSettings(message: null);
 
+    private void OpenQueueBrowser()
+    {
+        if (Client is not { } client)
+        {
+            OpenSettings();
+            return;
+        }
+        if (_queueBrowser is not null)
+        {
+            _queueBrowser.Activate();
+            return;
+        }
+        _queueBrowser = new QueueBrowserWindow(client, Settings.Jql, (issue, direction) => EditBrowserPin(client, issue, direction));
+        _queueBrowser.Closed += (_, _) => _queueBrowser = null;
+        _queueBrowser.Show();
+    }
+
+    internal bool CanDropBrowserTicket(string key) => _queueBrowser?.DraggedTicket is { } issue &&
+        string.Equals(issue.Key, key, StringComparison.OrdinalIgnoreCase) && ReferenceEquals(Client, _queueBrowser.Client);
+
+    internal void DropBrowserTicket(string key, string? anchor, bool after)
+    {
+        if (!CanDropBrowserTicket(key) || _queueBrowser is not { DraggedTicket: { } issue } browser) return;
+        browser.ReportPinStatus(EditBrowserPin(browser.Client, issue, direction: 0, moveExisting: true, anchor, after));
+    }
+
+    private string EditBrowserPin(IJiraClient source, JiraIssue issue, int direction, bool moveExisting = false,
+        string? anchor = null, bool after = false)
+    {
+        if (!ReferenceEquals(source, Client)) return "The Jira connection changed. Open Browse queues again.";
+        var site = source.Connection.SiteUrl.AbsoluteUri;
+        var saved = Settings.AdditionalTicketKeysBySite ??= new(StringComparer.Ordinal);
+        var original = saved.GetValueOrDefault(site);
+        var useCache = ReferenceEquals(source, _additionalTicketClient);
+        var pins = (original ?? []).Select(key => useCache ? _additionalTicketCache.GetValueOrDefault(key)?.Key ?? key : key)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var wasPinned = pins.Contains(issue.Key, StringComparer.OrdinalIgnoreCase);
+        var changed = direction == 0 ? TicketPinOrder.Place(pins, issue.Key, anchor, after, moveExisting)
+            : TicketPinOrder.Move(pins, issue.Key, direction);
+        if (!changed) return direction == 0 ? $"{issue.Key} is already pinned."
+            : $"{issue.Key} has no pinned ticket in that direction.";
+
+        saved[site] = pins.ToArray();
+        if (!SaveSettings())
+        {
+            if (original is null) saved.Remove(site);
+            else saved[site] = original;
+            return "Could not save the pinned ticket order.";
+        }
+        Bar.RequestRefresh();
+        return wasPinned ? $"Moved {issue.Key} in the pinned list." : $"Pinned {issue.Key}.";
+    }
+
     private void OpenAbout()
     {
         if (_aboutWindow is not null)
@@ -695,11 +805,31 @@ public sealed class AppController : IDisposable
     private bool ShowSettingsDialog(bool firstRun, string? message = null)
     {
         var window = new SettingsWindow(Settings, _credentials, firstRun, message);
-        if (window.ShowDialog() != true || window.Credentials is not { } credentials) return false;
+        if (window.ShowDialog() != true) return false;
+        if (window.ForgetSignIn)
+        {
+            try { _secrets.Clear(); }
+            catch (Exception ex) when (ex is CredentialBackendException or IOException or UnauthorizedAccessException)
+            {
+                Log.Error("Could not remove the saved Jira sign-in", ex);
+                System.Windows.MessageBox.Show("Windows could not remove the saved Jira sign-in.", "Jira sign-in");
+                return false;
+            }
+            _credentials = null;
+            IsAuthFailed = false;
+            return true;
+        }
+        if (window.Credentials is not { } credentials) return false;
 
+        try { _secrets.Save(credentials); }
+        catch (CredentialBackendException ex)
+        {
+            Log.Error("Could not save the Jira sign-in", ex);
+            System.Windows.MessageBox.Show("Windows could not save the Jira sign-in.", "Jira sign-in");
+            return false;
+        }
         Settings = window.Result;
         _worklogWindow?.RefreshLocalEntries();
-        _secrets.Save(credentials);
         _credentials = credentials;
         IsAuthFailed = false;
         SaveSettings();
@@ -720,7 +850,7 @@ public sealed class AppController : IDisposable
     {
         if (IsAuthFailed) return;
         IsAuthFailed = true;
-        Log.Error("Jira rejected the API token (401); pausing automatic refresh");
+        Log.Error("Jira rejected the saved sign-in (401); pausing automatic refresh");
         _ = PromptReauthenticateAsync();
     }
 
@@ -734,16 +864,18 @@ public sealed class AppController : IDisposable
         _reauthPromptOpen = true;
         try
         {
+            var dataCenter = _credentials?.IsDataCenter == true;
+            var reason = dataCenter ? "Jira rejected the saved sign-in. Check the password and whether REST Basic sign-in is enabled."
+                : "Jira rejected your API token. It may have expired or been revoked.";
             var box = new MessageBox
             {
                 Title = "Jira sign-in needed",
-                Content = "Jira rejected your API token – it may have expired or been revoked.\n\n" +
-                          "Timers keep running and worklogs are kept; they'll be posted once you enter a new token.",
-                PrimaryButtonText = "Update token…",
+                Content = reason + "\n\nTimers keep running and worklogs are saved until you sign in again.",
+                PrimaryButtonText = "Update sign-in…",
                 CloseButtonText = "Later",
             };
             if (await box.ShowDialogAsync() == MessageBoxResult.Primary)
-                OpenSettings("Jira rejected the saved API token. Create a new one and paste it below.");
+                OpenSettings(reason);
         }
         finally
         {
@@ -763,15 +895,17 @@ public sealed class AppController : IDisposable
         }
     }
 
-    private void SaveSettings()
+    private bool SaveSettings()
     {
         try
         {
             _settingsStore.Save(Settings);
+            return true;
         }
         catch (Exception ex)
         {
             Log.Error("Could not save settings", ex);
+            return false;
         }
     }
 
@@ -796,7 +930,12 @@ public sealed class AppController : IDisposable
         switch (await box.ShowDialogAsync())
         {
             case MessageBoxResult.Primary:
-                await Worklogs.RetryPendingAsync();
+                var client = Client;
+                try { await Worklogs.RetryPendingAsync(); }
+                catch (JiraApiException ex) when (ex.StatusCode == 401 && client is not null)
+                {
+                    Bar.ReportJiraSignInFailure(client, ex);
+                }
                 break;
             case MessageBoxResult.Secondary:
                 foreach (var p in pending) Worklogs.Discard(p.Id);

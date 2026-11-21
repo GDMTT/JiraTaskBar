@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using JiraTaskBar.Core.Jira;
 
 namespace JiraTaskBar.Core.Storage;
 
@@ -10,7 +11,18 @@ namespace JiraTaskBar.Core.Storage;
 /// only ever be sent to the site it was saved for.
 /// </summary>
 /// <param name="CloudId">Set when the token is a scoped token (calls go through the API gateway).</param>
-public sealed record StoredCredentials(string SiteUrl, string Email, string ApiToken, string? CloudId = null);
+public sealed record StoredCredentials(string SiteUrl, string Email, string ApiToken, string? CloudId = null,
+    bool IsDataCenter = false)
+{
+    public JiraConnection CreateConnection() => new(JiraConnection.NormalizeConnectionSite(SiteUrl, IsDataCenter),
+        Email, ApiToken, CloudId, IsDataCenter);
+
+    public string? ReuseSecret(Uri site, string login, bool isDataCenter) =>
+        IsDataCenter == isDataCenter && (!isDataCenter || string.Equals(Email, login, StringComparison.Ordinal)) &&
+        Uri.TryCreate(SiteUrl, UriKind.Absolute, out var savedSite) && savedSite.Equals(site) ? ApiToken : null;
+
+    public override string ToString() => nameof(StoredCredentials);
+}
 
 public enum CredentialLoadStatus { Missing, Loaded, Unavailable }
 
