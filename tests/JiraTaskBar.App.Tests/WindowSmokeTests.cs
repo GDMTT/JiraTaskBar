@@ -192,7 +192,21 @@ public class WindowSmokeTests
                 Assert.IsType<string>(((FrameworkElement)settings.FindName(name)).ToolTip);
             var tabs = (TabControl)settings.FindName("SettingsTabs");
             Assert.Equal(8, tabs.Items.Count);
-            Assert.Same(settings.FindName("JiraTab"), tabs.SelectedItem);
+            Assert.Equal(Dock.Top, tabs.TabStripPlacement);
+            var jiraTab = (TabItem)settings.FindName("JiraTab");
+            Assert.Same(jiraTab, tabs.SelectedItem);
+            var headerTop = jiraTab.TranslatePoint(new Point(), tabs).Y;
+            var previousRight = double.NegativeInfinity;
+            foreach (var tab in tabs.Items.OfType<TabItem>())
+            {
+                var outline = Assert.IsType<Border>(tab.Template.FindName("HeaderBorder", tab));
+                Assert.Equal(new Thickness(1), outline.BorderThickness);
+                Assert.NotNull(outline.BorderBrush);
+                var headerPosition = tab.TranslatePoint(new Point(), tabs);
+                Assert.Equal(headerTop, headerPosition.Y);
+                Assert.True(headerPosition.X >= previousRight);
+                previousRight = headerPosition.X + tab.ActualWidth;
+            }
             var additionalTickets = (TextBox)settings.FindName("AdditionalTicketsBox");
             Assert.Equal(string.Join(Environment.NewLine, "TEST-1", "TEST-2"), additionalTickets.Text);
             tabs.SelectedItem = settings.FindName("AddTicketsTab");

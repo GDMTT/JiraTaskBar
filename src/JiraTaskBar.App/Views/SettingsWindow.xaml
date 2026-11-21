@@ -23,8 +23,58 @@
 
         <ui:TitleBar Title="Jira TaskBar – Settings" ShowMaximize="False" ShowMinimize="False" />
 
-        <TabControl x:Name="SettingsTabs" Grid.Row="1" Margin="16,8,16,8" TabStripPlacement="Left"
+        <TabControl x:Name="SettingsTabs" Grid.Row="1" Margin="16,8,16,8" TabStripPlacement="Top"
                     AutomationProperties.Name="Settings categories">
+            <TabControl.Template>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid KeyboardNavigation.TabNavigation="Local">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                                      Focusable="False" KeyboardNavigation.TabIndex="1">
+                            <TabPanel IsItemsHost="True" />
+                        </ScrollViewer>
+                        <Border Grid.Row="1" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="0,1,0,0"
+                                CornerRadius="4" KeyboardNavigation.DirectionalNavigation="Contained"
+                                KeyboardNavigation.TabIndex="2" KeyboardNavigation.TabNavigation="Local">
+                            <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent" />
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </TabControl.Template>
+            <TabControl.Resources>
+                <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
+                    <Setter Property="Margin" Value="0,0,4,4" />
+                    <Setter Property="Padding" Value="6" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="TabItem">
+                                <Border x:Name="HeaderBorder" MinHeight="32" CornerRadius="4"
+                                        Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"
+                                        BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                                    <ContentPresenter ContentSource="Header" HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" RecognizesAccessKey="True" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="HeaderBorder" Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}" />
+                                    </Trigger>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter TargetName="HeaderBorder" Property="Background" Value="{DynamicResource TabViewItemHeaderBackgroundSelected}" />
+                                        <Setter TargetName="HeaderBorder" Property="BorderBrush" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource TabViewItemForegroundSelected}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </TabControl.Resources>
             <TabItem x:Name="JiraTab" Header="Jira connection">
                 <ScrollViewer Style="{StaticResource SettingsTabScroll}">
                     <StackPanel>
