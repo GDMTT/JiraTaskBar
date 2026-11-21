@@ -36,6 +36,7 @@ public sealed class AppSettings
     public int IdlePromptMinutes { get; set; } = 10;
     /// <summary>Minute interval used to divide and snap the Day/Week worklog calendar.</summary>
     public int CalendarResolutionMinutes { get; set; } = 30;
+    public DayOfWeek? CalendarFirstDayOfWeek { get; set; }
     public int? DailyWorklogTargetMinutes { get; set; }
     public List<WorklogTypeColor> WorklogTypeColors { get; set; } = [];
     public bool StartWithWindows { get; set; }

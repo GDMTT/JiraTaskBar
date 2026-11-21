@@ -32,7 +32,10 @@ public sealed record JiraWorklog(
     int TimeSpentSeconds,
     string Author,
     string? Comment,
-    System.Text.Json.Nodes.JsonNode? CommentDocument = null);
+    System.Text.Json.Nodes.JsonNode? CommentDocument = null)
+{
+    public string? AuthorAccountId { get; init; }
+}
 
 /// <param name="SiteUrl">The Jira site, used for browser links (and for REST calls with a classic token).</param>
 /// <param name="CloudId">

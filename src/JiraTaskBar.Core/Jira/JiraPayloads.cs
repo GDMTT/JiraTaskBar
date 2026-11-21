@@ -152,7 +152,10 @@ public static class JiraPayloads
                 item["timeSpentSeconds"]?.GetValue<int>() ?? 0,
                 item["author"]?["displayName"]?.GetValue<string>() ?? string.Empty,
                 AdfText(item["comment"]),
-                item["comment"]?.DeepClone()));
+                item["comment"]?.DeepClone())
+            {
+                AuthorAccountId = item["author"]?["accountId"]?.GetValue<string>(),
+            });
         }
         return (result, node?["total"]?.GetValue<int>() ?? items.Count, items.Count);
     }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http;
 using System.Windows;
 using JiraTaskBar.App.Services;
@@ -40,6 +41,10 @@ public partial class SettingsWindow : FluentWindow
         var resolutionIndex = Array.IndexOf(WorklogCalendarLayout.SupportedResolutions,
             WorklogCalendarLayout.NormalizeResolution(current.CalendarResolutionMinutes));
         CalendarResolutionBox.SelectedIndex = resolutionIndex;
+        var dayNames = CultureInfo.CurrentCulture.DateTimeFormat.DayNames;
+        CalendarFirstDayBox.ItemsSource = new[] { "Use Windows regional settings" }.Concat(dayNames);
+        CalendarFirstDayBox.SelectedIndex = current.CalendarFirstDayOfWeek is { } day && Enum.IsDefined(day)
+            ? (int)day + 1 : 0;
         DailyTargetBox.Value = current.DailyWorklogTargetMinutes;
         WorklogColorsBox.Text = string.Join(Environment.NewLine,
             (current.WorklogTypeColors ?? []).Select(rule => $"{rule.Project} / {rule.IssueType} = {rule.Color}"));
@@ -112,6 +117,8 @@ public partial class SettingsWindow : FluentWindow
             ShortSessions = ShortSessionBox.SelectedIndex == 0 ? ShortSessionMode.RoundUpToMinute : ShortSessionMode.Skip,
             CalendarResolutionMinutes = WorklogCalendarLayout.SupportedResolutions[
                 Math.Max(0, CalendarResolutionBox.SelectedIndex)],
+            CalendarFirstDayOfWeek = CalendarFirstDayBox.SelectedIndex > 0
+                ? (DayOfWeek)(CalendarFirstDayBox.SelectedIndex - 1) : null,
             DailyWorklogTargetMinutes = DailyTargetBox.Value is > 0 and <= 1440 and var target ? (int)target : null,
             WorklogTypeColors = worklogColors,
             StartWithWindows = StartupSwitch.IsChecked == true,

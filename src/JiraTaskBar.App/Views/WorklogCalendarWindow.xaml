@@ -49,7 +49,11 @@
                            VerticalAlignment="Center" />
                     <ComboBox x:Name="HighlightIssueBox" Width="150" SelectionChanged="Highlight_Changed" />
                 </StackPanel>
-                <TextBlock x:Name="StatusText" Opacity="0.75" Text="Loading Jira worklogs…" />
+                <StackPanel>
+                    <TextBlock x:Name="StatusText" Opacity="0.75" Text="Loading your Jira worklogs…" TextWrapping="Wrap" />
+                    <TextBlock x:Name="LoadWarningText" Margin="0,4,0,0" FontWeight="SemiBold" TextWrapping="Wrap"
+                               Visibility="Collapsed" />
+                </StackPanel>
             </DockPanel>
         </Border>
 

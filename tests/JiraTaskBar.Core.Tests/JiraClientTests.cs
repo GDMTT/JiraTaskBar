@@ -80,6 +80,28 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Worklog_issue_search_includes_older_starts_and_reads_past_the_queue_limit()
+    {
+        var (client, handler) = Create();
+        for (var page = 0; page < 3; page++)
+        {
+            handler.Respond(System.Text.Json.JsonSerializer.Serialize(new
+            {
+                issues = Enumerable.Range(page * 100 + 1, 100).Select(id => new { key = $"TEST-{id}" }),
+                isLast = page == 2,
+                nextPageToken = $"page {page + 1}",
+            }));
+        }
+
+        var issues = await client.FindWorklogIssuesAsync("site:account", new(2026, 11, 24));
+
+        Assert.Equal(300, issues.Count);
+        Assert.Contains("worklogAuthor = \"site:account\" AND worklogDate < \"2026-11-24\"&",
+            Uri.UnescapeDataString(handler.Requests[0].PathAndQuery));
+        Assert.Contains("nextPageToken=page%202", handler.Requests[2].PathAndQuery);
+    }
+
+    [Fact]
     public async Task Request_sla_keeps_the_latest_completed_cycle_ahead_of_the_due_date()
     {
         var (client, handler) = Create();
@@ -199,7 +221,7 @@ public class JiraClientTests
         handler.Respond("""
             {"startAt":0,"maxResults":1,"total":2,"worklogs":[
               {"id":"10","started":"2026-11-03T09:00:00.000+1300","timeSpentSeconds":900,
-               "author":{"displayName":"Pat"},"comment":{"type":"doc","version":1,"content":[
+               "author":{"displayName":"Pat","accountId":"atlassian-account"},"comment":{"type":"doc","version":1,"content":[
                  {"type":"paragraph","content":[{"type":"text","text":"Investigated issue"}]}]}}
             ]}
             """);
@@ -216,6 +238,7 @@ public class JiraClientTests
         Assert.Equal("Investigated issue", worklogs[0].Comment);
         Assert.Equal(900, worklogs[0].TimeSpentSeconds);
         Assert.Equal("Pat", worklogs[0].Author);
+        Assert.Equal("atlassian-account", worklogs[0].AuthorAccountId);
         Assert.Equal("/rest/api/3/issue/ABC-1/worklog?startAt=0&maxResults=100", handler.Requests[0].PathAndQuery);
         Assert.Contains("startAt=1", handler.Requests[1].PathAndQuery);
     }

@@ -40,6 +40,8 @@ public partial class WorklogCalendarWindow
     private DateOnly _anchor = DateOnly.FromDateTime(DateTime.Today);
     private WorklogCalendarView _view = WorklogCalendarView.Week;
     private IReadOnlyList<JiraWorklog> _worklogs = [];
+    private IReadOnlyList<JiraIssue> _worklogIssues = [];
+    private string? _accountId;
     private readonly Dictionary<string, Color> _worklogColors = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _localIssueKeys = new(StringComparer.OrdinalIgnoreCase);
     private string? _highlightedIssueKey;
@@ -142,15 +144,18 @@ public partial class WorklogCalendarWindow
         _refreshPending = false;
         var version = ++_loadVersion;
         var selectedIssue = _issue;
+        var range = CurrentRange();
         _load?.Cancel();
         var load = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
         _load = load;
         RefreshButton.IsEnabled = false;
-        StatusText.Text = "Loading Jira worklogs…";
+        StatusText.Text = "Loading your Jira worklogs…";
         try
         {
-            var result = await WorklogCalendarData.LoadAsync(_client, _issues(), selectedIssue, load.Token, _localIssueKeys);
-            if (version != _loadVersion || !_issue.Key.Equals(selectedIssue.Key, StringComparison.OrdinalIgnoreCase))
+            var result = await WorklogCalendarData.LoadAsync(_client, _issues(), selectedIssue, range,
+                load.Token, _localIssueKeys);
+            if (version != _loadVersion || range != CurrentRange() ||
+                !_issue.Key.Equals(selectedIssue.Key, StringComparison.OrdinalIgnoreCase))
                 return false;
             if (_calendarEdit is not null || _savingEdit)
             {
@@ -158,8 +163,11 @@ public partial class WorklogCalendarWindow
                 return false;
             }
             _worklogs = result.Worklogs;
-            StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded across {result.IssueKeys.Count} ticket(s)" +
-                (result.FailedIssueCount == 0 ? string.Empty : $"; {result.FailedIssueCount} ticket(s) could not be loaded");
+            _worklogIssues = result.DiscoveredIssues;
+            _accountId = result.AccountId;
+            StatusText.Text = $"Loaded your Jira worklogs from {result.IssueKeys.Count - result.FailedIssueCount} ticket(s).";
+            SetLoadWarning((result.DiscoveryFailed ? "Jira search failed. Only known tickets were checked. " : string.Empty) +
+                (result.FailedIssueCount == 0 ? string.Empty : $"{result.FailedIssueCount} ticket(s) could not be loaded."));
             RenderScheduler();
             return true;
         }
@@ -169,8 +177,11 @@ public partial class WorklogCalendarWindow
         }
         catch (Exception ex)
         {
-            if (version == _loadVersion)
+            if (version == _loadVersion && range == CurrentRange())
+            {
                 StatusText.Text = $"Could not load worklogs: {ex.Message}";
+                SetLoadWarning("The calendar could not be refreshed. Worklogs and totals may be incomplete.");
+            }
             return false;
         }
         finally
@@ -184,29 +195,41 @@ public partial class WorklogCalendarWindow
         }
     }
 
-    private void ViewMode_Changed(object sender, SelectionChangedEventArgs e)
+    private void SetLoadWarning(string warning)
+    {
+        LoadWarningText.Text = warning.TrimEnd();
+        LoadWarningText.Visibility = warning.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private async void ViewMode_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (!IsInitialized || ViewModeBox.SelectedIndex < 0) return;
         _view = (WorklogCalendarView)ViewModeBox.SelectedIndex;
-        RenderScheduler(resetScroll: true);
+        await ShowRangeAsync();
     }
 
-    private void Previous_Click(object sender, RoutedEventArgs e)
+    private async void Previous_Click(object sender, RoutedEventArgs e)
     {
         _anchor = WorklogCalendarLayout.Move(_anchor, _view, -1);
-        RenderScheduler(resetScroll: true);
+        await ShowRangeAsync();
     }
 
-    private void Next_Click(object sender, RoutedEventArgs e)
+    private async void Next_Click(object sender, RoutedEventArgs e)
     {
         _anchor = WorklogCalendarLayout.Move(_anchor, _view, 1);
-        RenderScheduler(resetScroll: true);
+        await ShowRangeAsync();
     }
 
-    private void Today_Click(object sender, RoutedEventArgs e)
+    private async void Today_Click(object sender, RoutedEventArgs e)
     {
         _anchor = DateOnly.FromDateTime(DateTime.Today);
+        await ShowRangeAsync();
+    }
+
+    private async Task ShowRangeAsync()
+    {
         RenderScheduler(resetScroll: true);
+        if (IsLoaded) await RefreshAsync();
     }
 
     private void Highlight_Changed(object sender, SelectionChangedEventArgs e)
@@ -216,15 +239,22 @@ public partial class WorklogCalendarWindow
         RefreshLocalEntries();
     }
 
+    private DayOfWeek FirstDayOfWeek => _settings()?.CalendarFirstDayOfWeek is { } day && Enum.IsDefined(day)
+        ? day : CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+
+    private WorklogCalendarRange CurrentRange() => WorklogCalendarLayout.RangeFor(_view, _anchor, FirstDayOfWeek);
+
+    private IEnumerable<JiraIssue> CalendarTickets() => _issues().Append(_issue).Concat(_worklogIssues)
+        .DistinctBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase);
+
     private void RenderScheduler(bool resetScroll = false)
     {
         if (SchedulerHost is null) return;
-        var range = WorklogCalendarLayout.RangeFor(_view, _anchor,
-            CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek);
+        var range = CurrentRange();
         RangeTitle.Text = RangeLabel(range);
         var allEntries = Entries().ToList();
         _localIssueKeys.UnionWith(allEntries.Where(entry => entry.Pending).Select(entry => entry.IssueKey));
-        var tickets = _issues().Append(_issue).DistinctBy(issue => issue.Key, StringComparer.OrdinalIgnoreCase).ToList();
+        var tickets = CalendarTickets().ToList();
         UpdateHighlightOptions(tickets.Select(issue => issue.Key).Concat(allEntries.Select(entry => entry.IssueKey)));
         var settings = _settings();
         UpdateWorklogColors(tickets, settings?.WorklogTypeColors ?? []);
@@ -232,10 +262,11 @@ public partial class WorklogCalendarWindow
         var start = WorklogCalendarLayout.LocalDateTime(range.Start, TimeOnly.MinValue, TimeZoneInfo.Local);
         var end = WorklogCalendarLayout.LocalDateTime(range.EndExclusive, TimeOnly.MinValue, TimeZoneInfo.Local);
         var rangeEntries = allEntries.Where(entry => entry.Started < end && entry.Ended > start).ToList();
-        var dayTotals = days.Select(day => rangeEntries.Sum(entry => ClipToDay(entry, day)?.Seconds ?? 0)).ToArray();
         var entries = rangeEntries.SelectMany(entry => days.Select(day => ClipToDay(entry, day)).OfType<CalendarEntry>())
             .OrderBy(e => e.Started)
             .ToList();
+        var entriesByDay = entries.ToLookup(entry => entry.Date);
+        var dayTotals = days.Select(day => entriesByDay[day].Sum(entry => entry.Seconds)).ToArray();
         RangeTotal.Text = $"Total: {FormatDuration(dayTotals.Sum())}";
 
         if (resetScroll)
@@ -266,7 +297,7 @@ public partial class WorklogCalendarWindow
 
     private void RenderMonth(WorklogCalendarRange range, IReadOnlyList<CalendarEntry> entries)
     {
-        var firstDay = CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+        var firstDay = FirstDayOfWeek;
         var back = (7 + (int)range.Start.DayOfWeek - (int)firstDay) % 7;
         var gridStart = range.Start.AddDays(-back);
         var grid = new Grid();
@@ -344,19 +375,19 @@ public partial class WorklogCalendarWindow
         ToolTip = EntryTooltip(entry),
     };
 
-    private void MonthDay_Click(object sender, MouseButtonEventArgs e)
+    private async void MonthDay_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is not Border { Tag: DateOnly date }) return;
+        var previousRange = CurrentRange();
         _anchor = date;
         if (e.ClickCount >= 2)
         {
             _view = WorklogCalendarView.Day;
             ViewModeBox.SelectedIndex = (int)_view;
         }
-        else
-        {
-            RenderScheduler();
-        }
+        else if (CurrentRange() != previousRange)
+            await ShowRangeAsync();
+        else RenderScheduler();
     }
 
     private void RenderTimeGrid(WorklogCalendarRange range, IReadOnlyList<CalendarEntry> entries,
@@ -768,7 +799,8 @@ public partial class WorklogCalendarWindow
                 current.TimeSpentSeconds != entry.Seconds || !string.Equals(current.Comment ?? string.Empty,
                     entry.Comment, StringComparison.Ordinal))
             {
-                _worklogs = WorklogCalendarData.ReplaceIssueWorklogs(_worklogs, issueKey, latest);
+                _worklogs = WorklogCalendarData.ReplaceIssueWorklogs(_worklogs, issueKey,
+                    WorklogCalendarData.ForAccount(latest, _accountId));
                 StatusText.Text = "This worklog changed in Jira. The calendar was refreshed without overwriting it.";
                 RenderScheduler();
                 return;
@@ -778,7 +810,8 @@ public partial class WorklogCalendarWindow
             await _client.UpdateWorklogAsync(issueKey, current, started, seconds, _closed.Token);
             var updated = current with { Started = started, TimeSpentSeconds = seconds };
             var updatedIssue = latest.Select(worklog => worklog.Id == updated.Id ? updated : worklog).ToList();
-            _worklogs = WorklogCalendarData.ReplaceIssueWorklogs(_worklogs, issueKey, updatedIssue);
+            _worklogs = WorklogCalendarData.ReplaceIssueWorklogs(_worklogs, issueKey,
+                WorklogCalendarData.ForAccount(updatedIssue, _accountId));
             RenderScheduler();
             _savingEdit = false;
             if (ApplyPendingFocus()) return;
@@ -926,7 +959,7 @@ public partial class WorklogCalendarWindow
     {
         var worklog = _worklogs.FirstOrDefault(w => w.Id == entry.Id && w.IssueKey == entry.IssueKey);
         if (worklog is null) return;
-        var issue = _issues().Append(_issue).FirstOrDefault(i => i.Key == entry.IssueKey)
+        var issue = CalendarTickets().FirstOrDefault(i => i.Key.Equals(entry.IssueKey, StringComparison.OrdinalIgnoreCase))
             ?? new JiraIssue(entry.IssueKey, entry.IssueKey, null, "", "", "");
         _savingEdit = true;
         var saved = false;
