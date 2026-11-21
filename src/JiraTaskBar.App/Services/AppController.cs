@@ -286,6 +286,7 @@ public sealed class AppController : IDisposable
             _additionalTicketCache = new(StringComparer.OrdinalIgnoreCase);
         }
         var additionalTicketCache = _additionalTicketCache;
+        if (_priorities is null && client.Connection.IsDataCenter) await client.GetMyselfAsync();
         var priorities = _priorities ??= await client.GetPrioritiesAsync();
         try
         {
@@ -764,9 +765,15 @@ public sealed class AppController : IDisposable
         }
         if (window.Credentials is not { } credentials) return false;
 
+        try { _secrets.Save(credentials); }
+        catch (CredentialBackendException ex)
+        {
+            Log.Error("Could not save the Jira sign-in", ex);
+            System.Windows.MessageBox.Show("Windows could not save the Jira sign-in.", "Jira sign-in");
+            return false;
+        }
         Settings = window.Result;
         _worklogWindow?.RefreshLocalEntries();
-        _secrets.Save(credentials);
         _credentials = credentials;
         IsAuthFailed = false;
         SaveSettings();

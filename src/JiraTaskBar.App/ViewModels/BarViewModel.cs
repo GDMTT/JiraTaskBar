@@ -108,7 +108,8 @@ public sealed partial class BarViewModel : ObservableObject
         }
         catch (JiraApiException ex) when (ex.StatusCode == 401)
         {
-            StatusMessage = "Jira sign-in expired – update your API token in Settings";
+            if (!ReferenceEquals(_app.Client, client)) return;
+            StatusMessage = client.Connection.IsDataCenter ? ex.Message : "Jira sign-in expired – update your API token in Settings";
             _app.ReportAuthFailure();
         }
         catch (Exception ex)

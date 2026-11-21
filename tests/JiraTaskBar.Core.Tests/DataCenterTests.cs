@@ -86,6 +86,7 @@ public class DataCenterTests
         await client.AddWorklogAsync("IT-1", worklog.Started, 120, "New");
         await client.AddWorklogCommentAsync("IT-1", worklog.Id, "Internal");
 
+        Assert.Equal(new Uri(Site, "rest/api/2/issue/IT-1/worklog"), handler.Requests[0].Url);
         Assert.Equal(new Uri(Site, "rest/api/2/issue/IT-1/worklog/20"), handler.Requests[1].Url);
         Assert.Equal("*Original*", JsonNode.Parse(handler.Requests[1].Body!)!["comment"]!.GetValue<string>());
         Assert.Equal("New", JsonNode.Parse(handler.Requests[2].Body!)!["comment"]!.GetValue<string>());
@@ -97,12 +98,14 @@ public class DataCenterTests
 
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
     [InlineData(HttpStatusCode.Redirect)]
     [InlineData(HttpStatusCode.OK)]
     public async Task DataCenterSignInFailuresAreReportedWithoutEchoingSecrets(HttpStatusCode status)
     {
         var handler = new FakeHandler().Respond($$"""{"errorMessages":["{{Password}}"]}""", status);
         var error = await Assert.ThrowsAsync<JiraApiException>(() => Create(handler).GetMyselfAsync());
+        Assert.Equal(401, error.StatusCode);
         Assert.DoesNotContain(Password, error.Message);
         Assert.Single(handler.Requests);
     }

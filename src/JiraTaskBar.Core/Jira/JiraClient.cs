@@ -103,7 +103,12 @@ public sealed class JiraClient : IJiraClient
 
     public async Task<JiraUser> GetMyselfAsync(CancellationToken ct = default)
     {
-        var node = await SendAsync(HttpMethod.Get, $"{ApiPath}/myself", null, ct) as JsonObject;
+        JsonObject? node;
+        try { node = await SendAsync(HttpMethod.Get, $"{ApiPath}/myself", null, ct) as JsonObject; }
+        catch (JiraApiException ex) when (Connection.IsDataCenter && ex.StatusCode == 403)
+        {
+            throw new JiraApiException("Jira denied REST Basic sign-in. Check with your Jira administrator that this authentication method is allowed.", 401);
+        }
         var account = node?[Connection.IsDataCenter ? "name" : "accountId"] is JsonValue value &&
             value.TryGetValue<string>(out var login) ? login : null;
         if (Connection.IsDataCenter && string.IsNullOrWhiteSpace(account))
@@ -340,15 +345,19 @@ public sealed class JiraClient : IJiraClient
     public async Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default)
     {
         var key = Uri.EscapeDataString(issueKey);
+        var path = $"{ApiPath}/issue/{key}/worklog";
+        if (Connection.IsDataCenter)
+        {
+            var response = await SendAsync(HttpMethod.Get, path, null, ct);
+            return JiraPayloads.ParseWorklogs(response, issueKey, isDataCenter: true).Worklogs;
+        }
+
         var all = new List<JiraWorklog>();
         var startAt = 0;
         while (true)
         {
-            var node = await SendAsync(HttpMethod.Get,
-                $"{ApiPath}/issue/{key}/worklog?startAt={startAt}&maxResults=100", null, ct);
-            if (Connection.IsDataCenter && node?["startAt"]?.GetValue<int>() != startAt)
-                throw new InvalidOperationException("Jira returned an unexpected worklog page offset.");
-            var page = JiraPayloads.ParseWorklogs(node, issueKey, Connection.IsDataCenter);
+            var node = await SendAsync(HttpMethod.Get, $"{path}?startAt={startAt}&maxResults=100", null, ct);
+            var page = JiraPayloads.ParseWorklogs(node, issueKey);
             all.AddRange(page.Worklogs);
             // Jira offsets count every response entry, including malformed entries we skip locally.
             // Advancing by the parsed count can otherwise duplicate valid worklogs indefinitely.
