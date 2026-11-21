@@ -19,10 +19,20 @@ public static class DueDateProgress
 
         var status = sla.Paused ? "Paused" : "In progress";
         var tooltip = $"{title}: {status}";
+        var label = $"Remaining when checked at {sla.ObservedAt.UtcDateTime:HH:mm:ss} UTC";
+        if (issue.CreatedAt is { } created && sla.BreachAt is { } deadline && created < deadline)
+        {
+            var asOf = sla.Paused ? sla.ObservedAt : now;
+            var timeLeft = deadline > asOf ? deadline - asOf : TimeSpan.Zero;
+            var progress = Math.Clamp(timeLeft.TotalSeconds / (deadline - created).TotalSeconds, 0, 1);
+            if (!sla.Paused) label = "Estimated remaining to the resolution deadline";
+            return new(DueDateKind.Upcoming, progress,
+                $"{tooltip}\n{label}: {FormatCountdown(timeLeft)}\n{progress:P0} of the creation-to-deadline interval remains");
+        }
+
         if (sla.RemainingMilliseconds is not { } snapshot) return new(DueDateKind.Upcoming, null, tooltip);
 
         var remaining = Math.Max(0d, snapshot);
-        var label = $"Remaining when checked at {sla.ObservedAt.UtcDateTime:HH:mm:ss} UTC";
         if (!sla.Paused && snapshot > 0 && sla.BreachAt is { } breach &&
             Math.Abs((breach - sla.ObservedAt).TotalMilliseconds - snapshot) <= 2000)
         {

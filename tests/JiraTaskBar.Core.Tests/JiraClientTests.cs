@@ -155,7 +155,12 @@ public class JiraClientTests
     public async Task Request_sla_keeps_the_latest_completed_cycle_ahead_of_the_due_date()
     {
         var (client, handler) = Create();
-        handler.Respond("""{"values":[{"name":"Unavailable","completedCycles":[]}],"isLastPage":false}""");
+        handler.Respond("""
+            {"values":[
+                {"name":"Time to first response","completedCycles":[{"breached":true}]},
+                {"name":"Time to resolution","completedCycles":[]}
+            ],"isLastPage":false}
+            """);
         handler.Respond("""
             {"values":[{"name":"Time to resolution","completedCycles":[
                 {"stopTime":{"epochMillis":2000},"breached":false},
@@ -165,7 +170,7 @@ public class JiraClientTests
 
         var sla = await client.GetRequestSlaAsync("SD-2");
         Assert.Equal("/rest/servicedeskapi/request/SD-2/sla?start=0&limit=50", handler.Requests[0].PathAndQuery);
-        Assert.Contains("start=1", handler.Requests[1].PathAndQuery);
+        Assert.Contains("start=2", handler.Requests[1].PathAndQuery);
         var issue = new JiraIssue("SD-2", "Ticket", null, "Done", "service_desk", "Task",
             DueDate: new DateOnly(2026, 11, 1)) { Sla = sla };
         var now = new DateTimeOffset(2026, 11, 19, 0, 0, 0, TimeSpan.Zero);
@@ -181,11 +186,25 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Request_sla_does_not_use_other_metrics_when_resolution_is_missing()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""
+            {"values":[
+                {"name":"Time to first response","completedCycles":[{"breached":true}]},
+                {"name":"Time to first resolution","ongoingCycle":{"breached":false}}
+            ],"isLastPage":true}
+            """);
+
+        Assert.Null(await client.GetRequestSlaAsync("SD-2"));
+    }
+
+    [Fact]
     public async Task Ongoing_sla_supersedes_past_cycles_and_preserves_paused_state()
     {
         var (client, handler) = Create();
         handler.Respond("""
-            {"values":[{"name":"Response","ongoingCycle":{"breached":false,"withinCalendarHours":false,
+            {"values":[{"name":"Time To Resolution","ongoingCycle":{"breached":false,"withinCalendarHours":false,
                 "goalDuration":{"millis":600000},"elapsedTime":{"millis":300000},"breachTime":{"epochMillis":2000}},
                 "completedCycles":[{"breached":true}]}],"isLastPage":true}
             """);

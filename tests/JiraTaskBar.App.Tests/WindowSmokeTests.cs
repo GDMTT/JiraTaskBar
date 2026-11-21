@@ -612,6 +612,7 @@ public class WindowSmokeTests
         try
         {
             calendar.Show();
+            calendar.RefreshLocalEntries();
             calendar.UpdateLayout();
             Assert.Equal(new[] { tuesday, thursday }, CalendarField<DateOnly[]>(calendar, "_timeDays"));
             Assert.Equal("Total: 2:30:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
