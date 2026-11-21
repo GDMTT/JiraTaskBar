@@ -49,6 +49,8 @@ public class WindowSmokeTests
             bar.PlaceFloating(null, null, monitor);
             bar.UpdateLayout();
             Assert.True(bar.ActualHeight > 0);
+            AssertBrowserDropTargets(controller, bar, monitor, issue);
+            AssertQueueBrowserKeepsTheLatestSource(issue);
             var indicator = new DueDateIndicator { Width = 16, Height = 16 };
             System.Windows.Automation.AutomationProperties.SetName(indicator, "Due today");
             Assert.Equal("Due today", System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(indicator).GetName());
@@ -254,6 +256,76 @@ public class WindowSmokeTests
         Assert.True(low[filledSector + 2] > low[filledSector + 1] * 2);
         Assert.Equal(new byte[] { 0, 0, 0, 255 }, overdue[center..(center + 4)]);
         Assert.True(overdue[ring + 2] > overdue[ring + 1] * 2);
+    }
+
+    private static void AssertBrowserDropTargets(AppController controller, BarWindow bar, MonitorInfo monitor, JiraIssue issue)
+    {
+        var second = new TicketViewModel(issue with { Key = "SD-43" }, _ => { }, _ => { }, _ => { });
+        controller.Bar.Tickets.Add(second);
+        try
+        {
+            var items = (ItemsControl)bar.FindName("TicketItems");
+            foreach (var edge in new[] { DockEdge.Floating, DockEdge.Left })
+            {
+                bar.ApplyDock(edge, monitor);
+                bar.UpdateLayout();
+                var ticket = Assert.IsAssignableFrom<FrameworkElement>(items.ItemContainerGenerator.ContainerFromItem(second));
+                var before = new Point(ticket.ActualWidth / 4, ticket.ActualHeight / 4);
+                var after = new Point(ticket.ActualWidth * 3 / 4, ticket.ActualHeight * 3 / 4);
+                foreach (var (point, expected) in new[] { (before, false), (after, true) })
+                {
+                    var hit = Assert.IsAssignableFrom<DependencyObject>(ticket.InputHitTest(point));
+                    Assert.Equal((second.Key, expected), bar.GetBrowserDropTarget(hit, element => ticket.TranslatePoint(point, element)));
+                }
+            }
+            Assert.Equal((null, false), bar.GetBrowserDropTarget(bar, _ => default));
+        }
+        finally
+        {
+            controller.Bar.Tickets.Remove(second);
+            bar.ApplyDock(DockEdge.Floating, monitor);
+            bar.PlaceFloating(null, null, monitor);
+        }
+    }
+
+    private static void AssertQueueBrowserKeepsTheLatestSource(JiraIssue issue)
+    {
+        var initial = new TaskCompletionSource<IReadOnlyList<JiraIssue>>();
+        var current = new TaskCompletionSource<IReadOnlyList<JiraIssue>>();
+        CancellationToken initialRequest = default;
+        var client = new NullJiraClient
+        {
+            Queues = [new JiraQueue("SD", "Waiting", "status = Waiting")],
+            BrowseIssues = (jql, token) =>
+            {
+                if (jql == "status = Waiting") return current.Task;
+                initialRequest = token;
+                return initial.Task;
+            },
+        };
+        var window = new QueueBrowserWindow(client, "assignee = currentUser()", (_, _) => "Pinned");
+        try
+        {
+            window.Show();
+            window.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            var source = (ComboBox)window.FindName("SourceBox");
+            var status = (TextBlock)window.FindName("ResultsStatus");
+            var grid = (DataGrid)window.FindName("TicketGrid");
+            Assert.True(initialRequest.CanBeCanceled);
+            Assert.Contains("Loading", status.Text);
+            source.SelectedIndex = 1;
+            Assert.True(initialRequest.IsCancellationRequested);
+
+            current.SetResult([issue]);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            Assert.Equal(issue.Key, Assert.IsType<QueueBrowserWindow.TicketRow>(Assert.Single(grid.Items.Cast<object>())).Issue.Key);
+
+            initial.SetResult([issue with { Key = "SD-99" }]);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            Assert.Equal(issue.Key, Assert.IsType<QueueBrowserWindow.TicketRow>(Assert.Single(grid.Items.Cast<object>())).Issue.Key);
+        }
+        finally { window.Close(); }
     }
 
     private static void AssertAddedTicketsJoinTheQueue(AppController controller, BarWindow bar, JiraIssue issue)
@@ -834,6 +906,11 @@ public class WindowSmokeTests
     private sealed class NullJiraClient : IJiraClient
     {
         public IReadOnlyList<JiraIssue> QueueIssues { get; set; } = [];
+        public IReadOnlyList<JiraQueue> Queues { get; init; } = [];
+        public Func<string, CancellationToken, Task<IReadOnlyList<JiraIssue>>>? BrowseIssues { get; init; }
+        public Task<IReadOnlyList<JiraQueue>> GetQueuesAsync(CancellationToken ct = default) => Task.FromResult(Queues);
+        public Task<IReadOnlyList<JiraIssue>> BrowseIssuesAsync(string jql, IReadOnlyList<JiraPriority> priorities,
+            CancellationToken ct = default) => BrowseIssues?.Invoke(jql, ct) ?? SearchAsync(jql, priorities, ct);
         public IReadOnlyList<JiraIssueLookup> AddedLookups { get; set; } = [];
         public IReadOnlyList<string> RequestedAddedKeys { get; private set; } = [];
         public IReadOnlyList<JiraWorklog>? Worklogs { get; set; }

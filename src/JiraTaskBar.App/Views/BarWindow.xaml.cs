@@ -162,12 +162,17 @@ public partial class BarWindow : Window
     {
         if (e.Data.GetData(QueueBrowserWindow.TicketDragFormat, autoConvert: false) is not string key ||
             !_app.CanDropBrowserTicket(key)) return;
-        var target = e.OriginalSource is DependencyObject element
-            ? ItemsControl.ContainerFromElement(TicketItems, element) as FrameworkElement : null;
-        var after = target is not null && IsAfterTicketMidpoint(e.GetPosition(target), target.RenderSize, _vm.Orientation);
-        _app.DropBrowserTicket(key, (target?.DataContext as TicketViewModel)?.Key, after);
+        var (anchor, after) = GetBrowserDropTarget(e.OriginalSource as DependencyObject, e.GetPosition);
+        _app.DropBrowserTicket(key, anchor, after);
         e.Effects = DragDropEffects.Copy;
         e.Handled = true;
+    }
+
+    internal (string? Anchor, bool After) GetBrowserDropTarget(DependencyObject? source, Func<FrameworkElement, Point> position)
+    {
+        if (source is null || ItemsControl.ContainerFromElement(TicketItems, source) is not FrameworkElement target ||
+            target.DataContext is not TicketViewModel ticket) return (null, false);
+        return (ticket.Key, IsAfterTicketMidpoint(position(target), target.RenderSize, _vm.Orientation));
     }
 
     internal static bool IsAfterTicketMidpoint(Point point, Size size, Orientation orientation) =>
