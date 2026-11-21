@@ -45,7 +45,8 @@ public sealed record JiraWorklog(
 /// (<c>https://api.atlassian.com/ex/jira/{cloudId}/</c>), the only place scoped tokens are accepted.
 /// Null for a classic token, which is used against the site URL.
 /// </param>
-public sealed record JiraConnection(Uri SiteUrl, string Email, string ApiToken, string? CloudId = null)
+public sealed record JiraConnection(Uri SiteUrl, string Email, string ApiToken, string? CloudId = null,
+    bool IsDataCenter = false)
 {
     /// <summary>The minimum classic scopes a scoped token needs for this app.</summary>
     public const string RequiredScopes = "read:jira-work, write:jira-work, read:jira-user";
@@ -58,7 +59,9 @@ public sealed record JiraConnection(Uri SiteUrl, string Email, string ApiToken, 
     /// <summary>Base address for REST calls: the API gateway for scoped tokens, otherwise the site.</summary>
     public Uri ApiBaseUrl => CloudId is null ? SiteUrl : new Uri($"https://{GatewayHost}/ex/jira/{NormalizeCloudId(CloudId)}/");
 
-    public Uri BrowseUrl(string issueKey) => new(SiteUrl, $"/browse/{Uri.EscapeDataString(issueKey)}");
+    public Uri BrowseUrl(string issueKey) => new(SiteUrl, $"browse/{Uri.EscapeDataString(issueKey)}");
+
+    public override string ToString() => nameof(JiraConnection);
 
     /// <summary>Validates a cloud ID (a GUID) and returns it in canonical lower-case form.</summary>
     /// <exception cref="ArgumentException">Not a GUID, so it could inject path segments into the gateway URL.</exception>
@@ -68,6 +71,28 @@ public sealed record JiraConnection(Uri SiteUrl, string Email, string ApiToken, 
             : throw new ArgumentException("The cloud ID should look like 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d.", nameof(input));
 
     private const string CloudDomain = ".atlassian.net";
+
+    public static Uri NormalizeConnectionSite(string input, bool isDataCenter) =>
+        isDataCenter ? NormalizeDataCenterSite(input) : NormalizeSiteUrl(input);
+
+    private static Uri NormalizeDataCenterSite(string input)
+    {
+        var text = (input ?? string.Empty).Trim();
+        if (!text.Contains("://", StringComparison.Ordinal)) text = "https://" + text;
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
+            uri.HostNameType == UriHostNameType.Unknown || uri.UserInfo.Length > 0 ||
+            text.IndexOfAny(['?', '#', '\\', '%', '@']) >= 0 || text.Any(char.IsWhiteSpace) ||
+            text.Split('/').Any(segment => segment is "." or ".."))
+            throw new ArgumentException("Enter an HTTPS Jira Data Center base URL, such as https://jira.company.com/jira.");
+
+        var host = uri.IdnHost.TrimEnd('.');
+        if (host.Equals("atlassian.net", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(CloudDomain, StringComparison.OrdinalIgnoreCase) ||
+            host.Equals(GatewayHost, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Jira Cloud sites require an API token. Select Jira Cloud in Settings.");
+
+        return new Uri(uri.AbsoluteUri.TrimEnd('/') + "/");
+    }
 
     /// <summary>
     /// Normalises user input such as "mycompany", "mycompany.atlassian.net" or a full URL with a path.

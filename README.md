@@ -43,7 +43,7 @@ Buttons are sorted by Jira priority (priority 1 first) and then by key. The colo
 - Context history stays in `%LOCALAPPDATA%\JiraTaskBar\context-switch-history.json`; it is never sent to Jira or an analytics service. It is retained until you use **Delete local history…** in the report.
 
 ## Sign-in
-Jira Cloud uses your Atlassian email and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens). Only `https://<name>.atlassian.net` sites are accepted.
+**Jira Cloud** uses your Atlassian email and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens) with a `https://<name>.atlassian.net` site.
 
 **Use a scoped token (recommended).** On the token page choose **Create API token with scopes** → **Jira**, and select `read:jira-work`, `write:jira-work` and `read:jira-user`. A leaked scoped token only exposes Jira work items, not your whole Atlassian account. Scoped tokens only work through Atlassian's API gateway, `api.atlassian.com/ex/jira/<cloud id>`, so the app needs your site's cloud ID:
 - Settings looks it up automatically from `https://<site>/_edge/tenant_info`, without sending your token.
@@ -56,7 +56,9 @@ The SLA indicator needs permission to view the Jira Service Management request. 
 If you use granular scopes, include `read:request.sla:jira-service-management`. Recreate a scoped token
 if its SLA scope is missing. When Jira does not make an SLA available, the indicator uses the due date.
 
-The site, email and token are stored together as a Generic Credential in Windows Credential Manager. Editing other files therefore can't redirect the token to a different site. Existing `credentials.bin` DPAPI data is migrated automatically and removed only after the new credential is verified. If you change the site in Settings, you must enter the token again.
+**Jira Data Center** is a compatibility option for deployments that allow [REST Basic authentication](https://developer.atlassian.com/server/jira/platform/basic-authentication/). Select **Jira Data Center username and password** in Settings and enter the HTTPS base URL, including any context path, such as `https://jira.company.com/jira`. Use your Jira username and password. The app targets the [Jira Data Center 11.3 LTS REST API](https://developer.atlassian.com/server/jira/platform/rest/v11003/intro/).
+
+Windows Credential Manager stores the site, login and secret together. Changing the site or authentication method requires re-entering the secret. Use **Forget saved sign-in** in Settings to remove the credential. Existing `credentials.bin` DPAPI data is migrated automatically and removed after the new credential is verified.
 
 If Jira rejects the token (for example because it expired), the app asks once for a new one. Automatic refreshes pause until you enter it, and worklogs are kept and posted afterwards. Preferences, state and logs are stored in `%LOCALAPPDATA%\JiraTaskBar`.
 

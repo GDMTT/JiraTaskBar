@@ -215,6 +215,25 @@ public class WindowSmokeTests
             Assert.Same(settings.FindName("AddTicketsTab"), tabs.SelectedItem);
             Assert.Contains("Enter a Jira ticket key", ((Wpf.Ui.Controls.InfoBar)settings.FindName("Status")).Message);
             settings.Close();
+            var dataCenterSettings = new SettingsWindow(new AppSettings(),
+                new StoredCredentials("https://jira.example.org/jira/", "agent", "example-password", IsDataCenter: true),
+                firstRun: false);
+            try
+            {
+                var authentication = (ComboBox)dataCenterSettings.FindName("AuthenticationBox");
+                var secret = (PasswordBox)dataCenterSettings.FindName("TokenBox");
+                Assert.True(dataCenterSettings.IsDataCenter);
+                Assert.Equal("_Password", ((Label)dataCenterSettings.FindName("SecretLabel")).Content);
+                Assert.Empty(secret.Password);
+                Assert.Equal(Visibility.Collapsed, ((FrameworkElement)dataCenterSettings.FindName("TokenTypePanel")).Visibility);
+                Assert.Equal(Visibility.Visible, ((FrameworkElement)dataCenterSettings.FindName("ForgetSignInButton")).Visibility);
+                secret.Password = "temporary-example";
+                authentication.SelectedIndex = 0;
+                Assert.False(dataCenterSettings.IsDataCenter);
+                Assert.Equal("API _token", ((Label)dataCenterSettings.FindName("SecretLabel")).Content);
+                Assert.Empty(secret.Password);
+            }
+            finally { dataCenterSettings.Close(); }
 
             AssertAddedTicketsJoinTheQueue(controller, bar, issue);
             AssertFilteredRunningTicketsPreservePinOrder(controller, issue);

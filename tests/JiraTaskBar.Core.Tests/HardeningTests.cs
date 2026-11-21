@@ -31,6 +31,24 @@ public class SecretStoreTests : IDisposable
     }
 
     [Fact]
+    public void DataCenterSecretIsSavedWithItsModeSiteAndLoginAndCanBeCleared()
+    {
+        var stored = new StoredCredentials("https://jira.example.com/Jira/", "local-user", "fake-password", IsDataCenter: true);
+        Store.Save(stored);
+        Assert.Equal(stored, Store.Load());
+        Assert.Equal(stored.ApiToken, stored.ReuseSecret(new Uri(stored.SiteUrl), stored.Email, true));
+        Assert.Null(stored.ReuseSecret(new Uri("https://jira.example.com/jira/"), stored.Email, true));
+        Assert.Null(stored.ReuseSecret(new Uri("https://other.example.com/Jira/"), stored.Email, true));
+        Assert.Null(stored.ReuseSecret(new Uri(stored.SiteUrl), "other-user", true));
+        Assert.Null(stored.ReuseSecret(new Uri(stored.SiteUrl), stored.Email, false));
+        Assert.DoesNotContain(stored.ApiToken, stored.ToString());
+
+        Store.Clear();
+        Assert.Null(Store.Load());
+        Assert.Null(_backend.Data);
+    }
+
+    [Fact]
     public void Tampered_blob_is_rejected()
     {
         Store.Save(Creds);

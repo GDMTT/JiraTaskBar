@@ -22,14 +22,16 @@ public static class JiraPayloads
     }
 
     public static JsonObject Worklog(DateTimeOffset startedLocal, int timeSpentSeconds, string? comment,
-        JsonNode? commentDocument = null)
+        JsonNode? commentDocument = null, bool usePlainText = false)
     {
         var body = new JsonObject
         {
             ["started"] = FormatJiraDate(startedLocal),
             ["timeSpentSeconds"] = timeSpentSeconds,
         };
-        if (commentDocument is not null)
+        if (usePlainText && comment is not null)
+            body["comment"] = comment;
+        else if (commentDocument is not null)
             body["comment"] = commentDocument.DeepClone();
         else if (!string.IsNullOrWhiteSpace(comment))
             body["comment"] = PlainTextAdf(comment);
@@ -135,7 +137,8 @@ public static class JiraPayloads
                 DateTimeStyles.None, out var due) ? due : null);
     }
 
-    public static (IReadOnlyList<JiraWorklog> Worklogs, int Total, int ReturnedCount) ParseWorklogs(JsonNode? node, string issueKey)
+    public static (IReadOnlyList<JiraWorklog> Worklogs, int Total, int ReturnedCount) ParseWorklogs(JsonNode? node, string issueKey,
+        bool isDataCenter = false)
     {
         var result = new List<JiraWorklog>();
         var items = node?["worklogs"] as JsonArray ?? [];
@@ -154,7 +157,7 @@ public static class JiraPayloads
                 AdfText(item["comment"]),
                 item["comment"]?.DeepClone())
             {
-                AuthorAccountId = item["author"]?["accountId"]?.GetValue<string>(),
+                AuthorAccountId = item["author"]?[isDataCenter ? "name" : "accountId"]?.GetValue<string>(),
             });
         }
         return (result, node?["total"]?.GetValue<int>() ?? items.Count, items.Count);
@@ -163,6 +166,7 @@ public static class JiraPayloads
     private static string? AdfText(JsonNode? node)
     {
         if (node is null) return null;
+        if (node is JsonValue value && value.TryGetValue<string>(out var plain)) return plain;
         var textBuilder = new StringBuilder();
         CollectText(node, textBuilder);
         var text = textBuilder.ToString().TrimEnd();
