@@ -69,6 +69,9 @@ public sealed partial class TicketViewModel : ObservableObject
     private bool _isStale;
 
     [ObservableProperty]
+    private bool _isNew;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TimerText))]
     private string _elapsedText = string.Empty;
 

@@ -321,6 +321,7 @@ public class WindowSmokeTests
             finally { dataCenterSettings.Close(); }
 
             AssertAddedTicketsJoinTheQueue(controller, bar, issue);
+            AssertMenuAddsAndHighlightsTickets(controller, bar, issue);
             AssertFilteredRunningTicketsPreservePinOrder(controller, issue);
             typeof(AppController).GetProperty(nameof(AppController.IsExiting))!.SetValue(controller, true);
             bar.Close();
@@ -532,6 +533,63 @@ public class WindowSmokeTests
         {
             controller.Bar.StatusMessage = null;
             clientProperty.SetValue(controller, original);
+        }
+    }
+
+    private static void AssertMenuAddsAndHighlightsTickets(AppController controller, BarWindow bar, JiraIssue template)
+    {
+        var exact = template with { Key = "MENU-1", ProjectTypeKey = "software" };
+        var match = exact with { Key = "MENU-2", Summary = "Calendar bug" };
+        var client = new NullJiraClient
+        {
+            Connection = new(new Uri("https://menu-test.atlassian.net/"), "a@b.c", "token"),
+            QueueIssues = [match],
+            AddedLookups = [new("MENU-1", exact)],
+        };
+        var clientProperty = typeof(AppController).GetProperty(nameof(AppController.Client))!;
+        var original = controller.Client;
+        clientProperty.SetValue(controller, client);
+        var menu = controller.BuildMenu();
+        menu.PlacementTarget = bar;
+        try
+        {
+            menu.IsOpen = true;
+            var footer = Assert.IsType<AddTicketMenuItem>(menu.Items[^1]);
+            var panel = Assert.IsType<StackPanel>(footer.Header);
+            var row = Assert.IsType<DockPanel>(panel.Children[1]);
+            var add = Assert.IsType<Button>(row.Children[0]);
+            var search = Assert.IsType<Button>(row.Children[1]);
+            var input = Assert.IsType<TextBox>(row.Children[2]);
+
+            input.Text = "menu-1";
+            Assert.True(add.IsEnabled);
+            add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Contains("MENU-1", client.RequestedAddedKeys);
+            var ticket = Assert.IsType<TicketViewModel>(controller.Bar.Find(exact.Key));
+            Assert.True(ticket.IsNew);
+            controller.Bar.RefreshDisplay();
+            Assert.True(ticket.IsNew);
+            controller.Bar.AcknowledgeTicket(ticket);
+            controller.Bar.RefreshDisplay();
+            Assert.False(ticket.IsNew);
+
+            input.Text = "Calendar bug";
+            search.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var matches = Assert.IsType<ListBox>(panel.Children[2]);
+            Assert.Single(matches.Items);
+            matches.SelectedIndex = 0;
+            Assert.True(add.IsEnabled);
+            add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(["MENU-1", "MENU-2"],
+                controller.Settings.AdditionalTicketKeysBySite[client.Connection.SiteUrl.AbsoluteUri]);
+            Assert.True(controller.Bar.Find(match.Key)?.IsNew);
+        }
+        finally
+        {
+            menu.IsOpen = false;
+            clientProperty.SetValue(controller, original);
+            controller.Settings.AdditionalTicketKeysBySite.Remove(client.Connection.SiteUrl.AbsoluteUri);
+            controller.Bar.RefreshConnectionState();
         }
     }
 

@@ -12,6 +12,8 @@ public interface IJiraClient
     Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
+    Task<IReadOnlyList<JiraIssue>> SearchTicketSummariesAsync(string text, IReadOnlyList<JiraPriority> priorities,
+        CancellationToken ct = default) => SearchAsync(JiraClient.TicketSummaryQuery(text), priorities, ct);
     Task<IReadOnlyList<JiraIssue>> BrowseIssuesAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
         SearchAsync(jql, priorities, ct);
     Task<IReadOnlyList<JiraQueue>> GetQueuesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<JiraQueue>>([]);
@@ -163,6 +165,23 @@ public sealed class JiraClient : IJiraClient
     public Task<IReadOnlyList<JiraIssue>> SearchAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
         SearchIssuesAsync(jql, priorities, MaxIssues, ct);
 
+    public async Task<IReadOnlyList<JiraIssue>> SearchTicketSummariesAsync(string text, IReadOnlyList<JiraPriority> priorities,
+        CancellationToken ct = default) => (await SearchIssuesAsync(TicketSummaryQuery(text), priorities, 10, ct)).Take(10).ToArray();
+
+    internal static string TicketSummaryQuery(string text)
+    {
+        // Escape both the text-search syntax and the enclosing JQL string.
+        const string specials = "+-!(){}[]^\"~*?:\\/&|";
+        var escaped = new StringBuilder();
+        foreach (var character in text)
+        {
+            if (specials.Contains(character)) escaped.Append('\\');
+            escaped.Append(character);
+        }
+        var literal = escaped.ToString().Replace("\\", "\\\\").Replace("\"", "\\\"");
+        return $"summary ~ \"{literal}\" ORDER BY updated DESC";
+    }
+
     public Task<IReadOnlyList<JiraIssue>> BrowseIssuesAsync(string jql, IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default) =>
         SearchIssuesAsync(jql, priorities, null, ct);
 
@@ -261,10 +280,11 @@ public sealed class JiraClient : IJiraClient
         if (Connection.IsDataCenter) return await SearchDataCenterAsync(jql, byId, maxIssues, ct);
         var all = new List<JiraIssue>();
         var seenTokens = new HashSet<string>(StringComparer.Ordinal);
+        var pageSize = Math.Min(100, maxIssues ?? 100);
         string? token = null;
         do
         {
-            var url = $"rest/api/3/search/jql?jql={Uri.EscapeDataString(jql)}&fields={SearchFields}&maxResults=100";
+            var url = $"rest/api/3/search/jql?jql={Uri.EscapeDataString(jql)}&fields={SearchFields}&maxResults={pageSize}";
             if (token is not null)
                 url += "&nextPageToken=" + Uri.EscapeDataString(token);
             var node = await SendAsync(HttpMethod.Get, url, null, ct);
@@ -282,9 +302,10 @@ public sealed class JiraClient : IJiraClient
         IReadOnlyDictionary<string, JiraPriority> priorities, int? maxIssues, CancellationToken ct)
     {
         var all = new List<JiraIssue>();
+        var pageSize = Math.Min(100, maxIssues ?? 100);
         for (var offset = 0; maxIssues is null || all.Count < maxIssues;)
         {
-            var body = new JsonObject { ["jql"] = jql, ["startAt"] = offset, ["maxResults"] = 100,
+            var body = new JsonObject { ["jql"] = jql, ["startAt"] = offset, ["maxResults"] = pageSize,
                 ["fields"] = new JsonArray(SearchFields.Split(',').Select(field => (JsonNode?)JsonValue.Create(field)).ToArray()) };
             var page = await SendAsync(HttpMethod.Post, $"{ApiPath}/search", body, ct) as JsonObject;
             if (page?["issues"] is not JsonArray issues || page["startAt"]?.GetValue<int>() != offset ||

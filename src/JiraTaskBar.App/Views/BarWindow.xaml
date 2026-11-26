@@ -46,7 +46,7 @@
         </DataTemplate>
 
         <DataTemplate x:Key="TicketTemplate" DataType="{x:Type vm:TicketViewModel}">
-            <Grid x:Name="Cell" Margin="3,2"
+            <Grid x:Name="Cell" Margin="3,2" MouseEnter="Ticket_MouseEnter"
                   Width="{Binding DataContext.ButtonWidth, RelativeSource={RelativeSource AncestorType=Window}}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -132,6 +132,9 @@
                         </StackPanel>
                     </Grid>
                 </ui:Button>
+                <Border Grid.Row="1" IsHitTestVisible="False" CornerRadius="4" BorderThickness="2"
+                        BorderBrush="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"
+                        Visibility="{Binding IsNew, Converter={StaticResource BoolToVisibility}}" />
                 <ui:Button x:Name="OpenButton" Grid.Row="1"
                            Visibility="Hidden"
                            HorizontalAlignment="Right" VerticalAlignment="Top"

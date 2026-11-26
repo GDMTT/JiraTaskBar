@@ -152,6 +152,19 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Ticket_summary_search_escapes_text_and_requests_only_ten_results()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"issues":[{"key":"ABC-1"}],"isLast":true}""");
+
+        Assert.Equal("ABC-1", Assert.Single(await client.SearchTicketSummariesAsync("""Printer (A "4")""", [])).Key);
+
+        var query = Uri.UnescapeDataString(Assert.Single(handler.Requests).PathAndQuery);
+        Assert.Contains("""summary ~ "Printer \\(A \\\"4\\\"\\)" ORDER BY updated DESC&""", query);
+        Assert.EndsWith("maxResults=10", query);
+    }
+
+    [Fact]
     public async Task Worklog_preview_sends_date_bounds_to_jira()
     {
         var (client, handler) = Create();

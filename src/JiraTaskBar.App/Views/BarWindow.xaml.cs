@@ -1,4 +1,7 @@
 using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -33,6 +36,7 @@ public partial class BarWindow : Window
     private MonitorInfo? _snapMonitor;
     private Point _ticketDragStart;
     private TicketViewModel? _ticketDragTicket;
+    private bool _addingDroppedTicket;
 
     public BarWindow(BarViewModel vm, AppController app)
     {
@@ -160,19 +164,71 @@ public partial class BarWindow : Window
 
     private void BrowserTicket_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetData(QueueBrowserWindow.TicketDragFormat, autoConvert: false) is string key &&
-            _app.CanDropBrowserTicket(key) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Effects = ReadDropEffect(e.AllowedEffects);
+        if (e.Effects != DragDropEffects.None && QueueDropKey(e.Data) is null &&
+            (_addingDroppedTicket || _app.Client is not { } client || BrowserDropKey(e.Data, client.Connection.SiteUrl) is null))
+            e.Effects = DragDropEffects.None;
         e.Handled = true;
     }
 
-    private void BrowserTicket_Drop(object sender, DragEventArgs e)
+    private async void BrowserTicket_Drop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetData(QueueBrowserWindow.TicketDragFormat, autoConvert: false) is not string key ||
-            !_app.CanDropBrowserTicket(key)) return;
-        var (anchor, after) = GetBrowserDropTarget(e.OriginalSource as DependencyObject, e.GetPosition);
-        _app.DropBrowserTicket(key, anchor, after);
-        e.Effects = DragDropEffects.Copy;
         e.Handled = true;
+        e.Effects = ReadDropEffect(e.AllowedEffects);
+        if (e.Effects == DragDropEffects.None) return;
+        var (anchor, after) = GetBrowserDropTarget(e.OriginalSource as DependencyObject, e.GetPosition);
+        if (QueueDropKey(e.Data) is { } internalKey)
+        {
+            _app.DropBrowserTicket(internalKey, anchor, after);
+            return;
+        }
+        if (_addingDroppedTicket || _app.Client is not { } client || BrowserDropKey(e.Data, client.Connection.SiteUrl) is not { } key)
+        {
+            e.Effects = DragDropEffects.None;
+            return;
+        }
+        _addingDroppedTicket = true;
+        try
+        {
+            var result = await _app.AddTicketByKeyAsync(client, key, anchor, after);
+            if (!result.Success && ReferenceEquals(client, _app.Client)) _vm.StatusMessage = result.Message;
+        }
+        finally { _addingDroppedTicket = false; }
+    }
+
+    private string? QueueDropKey(IDataObject data) =>
+        _app.HasDraggedQueueTicket && data.TryGetData<string>(QueueBrowserWindow.TicketDragFormat, autoConvert: false, out var key) &&
+        _app.CanDropBrowserTicket(key) ? key : null;
+
+    private static DragDropEffects ReadDropEffect(DragDropEffects allowed) =>
+        (allowed & DragDropEffects.Copy) != 0 ? DragDropEffects.Copy : allowed & DragDropEffects.Link;
+
+    internal static string? BrowserDropKey(IDataObject data, Uri site)
+    {
+        try
+        {
+            if (data.TryGetData<string>(DataFormats.UnicodeText, autoConvert: false, out var text) &&
+                TicketInput.KeyFromUrl(text, site) is { } key)
+                return key;
+
+            // CFSTR_INETURLW can be exposed as a stream by WPF because it is a native format.
+            const string urlFormat = "UniformResourceLocatorW";
+            if (data.TryGetData<string>(urlFormat, autoConvert: false, out var url))
+                return TicketInput.KeyFromUrl(url, site);
+            if (data.TryGetData<MemoryStream>(urlFormat, autoConvert: false, out var stream) &&
+                stream.Length is > 0 and <= (TicketInput.MaxUrlLength + 1) * 2 && stream.Length % 2 == 0)
+                return TicketInput.KeyFromUrl(Encoding.Unicode.GetString(stream.ToArray()).TrimEnd('\0'), site);
+            return null;
+        }
+        catch (Exception ex) when (ex is ExternalException or InvalidOperationException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private void Ticket_MouseEnter(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: TicketViewModel ticket }) _vm.AcknowledgeTicket(ticket);
     }
 
     internal (string? Anchor, bool After) GetBrowserDropTarget(DependencyObject? source, Func<FrameworkElement, Point> position)
