@@ -13,6 +13,7 @@ public sealed partial class BarViewModel : ObservableObject
 {
     private readonly AppController _app;
     private readonly Dictionary<string, TicketViewModel> _byKey = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _newTicketKeys = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<JiraIssue> _lastIssues = [];
     private int _pinnedCount;
     private IJiraClient? _slaOwner;
@@ -211,7 +212,25 @@ public sealed partial class BarViewModel : ObservableObject
     /// <summary>Refreshes commands whose availability depends on the Jira connection.</summary>
     public void RefreshConnectionState()
     {
-        foreach (var t in Tickets) t.RefreshConnectionState();
+        _newTicketKeys.Clear();
+        foreach (var ticket in Tickets)
+        {
+            ticket.IsNew = false;
+            ticket.RefreshConnectionState();
+        }
+    }
+
+    internal void MarkTicketAdded(IJiraClient client, string key)
+    {
+        _newTicketKeys.Add(key);
+        if (ReferenceEquals(client, _slaOwner) && Find(key) is { } ticket) ticket.IsNew = true;
+    }
+
+    internal void AcknowledgeTicket(TicketViewModel ticket)
+    {
+        if (!ticket.IsNew) return;
+        _newTicketKeys.Remove(ticket.Key);
+        ticket.IsNew = false;
     }
 
     private void Rebuild()
@@ -230,6 +249,7 @@ public sealed partial class BarViewModel : ObservableObject
             var vm = GetOrCreate(issue);
             vm.Issue = issue;
             vm.IsStale = false;
+            vm.IsNew = isPinned && _newTicketKeys.Contains(issue.Key);
             if (!Filter.Matches(issue, now, TimeZoneInfo.Local))
             {
                 if (!isPinned || !issue.Key.Equals(activeKey, StringComparison.OrdinalIgnoreCase)) continue;
@@ -336,7 +356,11 @@ public sealed partial class BarViewModel : ObservableObject
     {
         if (_byKey.TryGetValue(issue.Key, out var existing)) return existing;
         var vm = new TicketViewModel(issue,
-            toggle: t => _app.ToggleTimer(t.Key),
+            toggle: t =>
+            {
+                AcknowledgeTicket(t);
+                _app.ToggleTimer(t.Key);
+            },
             open: t => _app.OpenInBrowser(t.Key),
             comment: t => _app.OpenCommentEditor(t),
             settings: () => _app.Settings,

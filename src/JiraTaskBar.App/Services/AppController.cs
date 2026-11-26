@@ -651,6 +651,8 @@ public sealed class AppController : IDisposable
         menu.Items.Add(Item("About…", null, OpenAbout));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Exit", SymbolRegular.Power24, () => _ = ExitAsync()));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(new AddTicketMenuItem(this, Client));
     }
 
     private static MenuItem Item(string header, SymbolRegular? icon, Action? onClick)
@@ -722,7 +724,7 @@ public sealed class AppController : IDisposable
             _queueBrowser.Activate();
             return;
         }
-        _queueBrowser = new QueueBrowserWindow(client, Settings.Jql, (issue, direction) => EditBrowserPin(client, issue, direction));
+        _queueBrowser = new QueueBrowserWindow(client, Settings.Jql, (issue, direction) => EditTicketPin(client, issue, direction).Message);
         _queueBrowser.Closed += (_, _) => _queueBrowser = null;
         _queueBrowser.Show();
     }
@@ -730,16 +732,56 @@ public sealed class AppController : IDisposable
     internal bool CanDropBrowserTicket(string key) => _queueBrowser?.DraggedTicket is { } issue &&
         string.Equals(issue.Key, key, StringComparison.OrdinalIgnoreCase) && ReferenceEquals(Client, _queueBrowser.Client);
 
+    internal bool HasDraggedQueueTicket => _queueBrowser?.DraggedTicket is not null;
+
     internal void DropBrowserTicket(string key, string? anchor, bool after)
     {
         if (!CanDropBrowserTicket(key) || _queueBrowser is not { DraggedTicket: { } issue } browser) return;
-        browser.ReportPinStatus(EditBrowserPin(browser.Client, issue, direction: 0, moveExisting: true, anchor, after));
+        browser.ReportPinStatus(EditTicketPin(browser.Client, issue, direction: 0, moveExisting: true, anchor, after).Message);
     }
 
-    private string EditBrowserPin(IJiraClient source, JiraIssue issue, int direction, bool moveExisting = false,
+    internal async Task<(string Message, bool Success)> AddTicketByKeyAsync(IJiraClient client, string key,
         string? anchor = null, bool after = false)
     {
-        if (!ReferenceEquals(source, Client)) return "The Jira connection changed. Open Browse queues again.";
+        if (!ReferenceEquals(client, Client)) return ("The Jira connection changed. Try again.", false);
+        if (TicketInput.ParseKey(key) is not { } normalizedKey) return ("Enter a Jira ticket key.", false);
+        try
+        {
+            var results = await client.FetchIssuesByKeyAsync([normalizedKey], _priorities ?? []);
+            if (!ReferenceEquals(client, Client)) return ("The Jira connection changed. Try again.", false);
+            var result = results.SingleOrDefault();
+            if (result?.Issue is { } issue) return PinTicket(client, issue, anchor, after);
+            return (result?.CanRetry == true ? "Could not look up the ticket. Try again."
+                : $"Jira did not return an accessible ticket for {key}.", false);
+        }
+        catch (Exception ex)
+        {
+            return (ReportTicketLookupFailure(client, ex), false);
+        }
+    }
+
+    internal Task<IReadOnlyList<JiraIssue>> SearchTicketSummariesAsync(IJiraClient client, string query) =>
+        client.SearchTicketSummariesAsync(query, _priorities ?? []);
+
+    internal string ReportTicketLookupFailure(IJiraClient client, Exception error)
+    {
+        if (!ReferenceEquals(client, Client)) return "The Jira connection changed. Try again.";
+        if (error is JiraApiException { StatusCode: 401 } authError)
+        {
+            Bar.ReportJiraSignInFailure(client, authError);
+            return "Jira sign-in expired. Open Settings to reconnect.";
+        }
+        Log.Error("Ticket lookup failed", error);
+        return "Could not look up tickets in Jira. Try again.";
+    }
+
+    internal (string Message, bool Success) PinTicket(IJiraClient client, JiraIssue issue, string? anchor = null, bool after = false) =>
+        EditTicketPin(client, issue, direction: 0, anchor: anchor, after: after);
+
+    private (string Message, bool Success) EditTicketPin(IJiraClient source, JiraIssue issue, int direction, bool moveExisting = false,
+        string? anchor = null, bool after = false)
+    {
+        if (!ReferenceEquals(source, Client)) return ("The Jira connection changed. Try again.", false);
         var site = source.Connection.SiteUrl.AbsoluteUri;
         var saved = Settings.AdditionalTicketKeysBySite ??= new(StringComparer.Ordinal);
         var original = saved.GetValueOrDefault(site);
@@ -749,18 +791,19 @@ public sealed class AppController : IDisposable
         var wasPinned = pins.Contains(issue.Key, StringComparer.OrdinalIgnoreCase);
         var changed = direction == 0 ? TicketPinOrder.Place(pins, issue.Key, anchor, after, moveExisting)
             : TicketPinOrder.Move(pins, issue.Key, direction);
-        if (!changed) return direction == 0 ? $"{issue.Key} is already pinned."
-            : $"{issue.Key} has no pinned ticket in that direction.";
+        if (!changed) return direction == 0 ? ($"{issue.Key} is already pinned.", true)
+            : ($"{issue.Key} has no pinned ticket in that direction.", false);
 
         saved[site] = pins.ToArray();
         if (!SaveSettings())
         {
             if (original is null) saved.Remove(site);
             else saved[site] = original;
-            return "Could not save the pinned ticket order.";
+            return ("Could not save the pinned ticket order.", false);
         }
+        if (!wasPinned) Bar.MarkTicketAdded(source, issue.Key);
         Bar.RequestRefresh();
-        return wasPinned ? $"Moved {issue.Key} in the pinned list." : $"Pinned {issue.Key}.";
+        return (wasPinned ? $"Moved {issue.Key} in the pinned list." : $"Pinned {issue.Key}.", true);
     }
 
     private void OpenAbout()
