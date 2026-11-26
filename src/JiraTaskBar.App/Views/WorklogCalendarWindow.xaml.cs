@@ -181,6 +181,7 @@ public partial class WorklogCalendarWindow
             SetLoadWarning(string.Empty);
         }
         if (navigating) RenderScheduler(resetScroll: true);
+        else _rangeCache.Clear();
 
         var load = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
         _load = load;
