@@ -688,8 +688,14 @@ public class WindowSmokeTests
             mode.SelectedIndex = (int)WorklogCalendarView.Week;
             Assert.Equal("Total: 16:05:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
             Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);
+
+            client.Worklogs = [.. client.Worklogs!, Worklog("8", selected.Key, 3, 18, 0, 15)];
             Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
             Assert.Equal(new DateOnly(2026, 11, 24), client.DiscoveryUntil);
+            mode.SelectedIndex = (int)WorklogCalendarView.Month;
+            Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);
+            Assert.Contains(CalendarField<IReadOnlyList<JiraWorklog>>(calendar, "_worklogs"), worklog => worklog.Id == "8");
+            mode.SelectedIndex = (int)WorklogCalendarView.Week;
 
             client.FailDiscovery = true;
             Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
