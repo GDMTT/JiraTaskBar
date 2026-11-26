@@ -171,6 +171,7 @@ public partial class WorklogCalendarWindow
                 RenderScheduler(resetScroll: true);
                 return true;
             }
+            _rangeCache.Remove(range);
             SetLoadWarning("Showing cached worklogs while Jira is checked.");
         }
         else if (navigating)

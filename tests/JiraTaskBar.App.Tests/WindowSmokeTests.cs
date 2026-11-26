@@ -691,6 +691,16 @@ public class WindowSmokeTests
             Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
             Assert.Equal(new DateOnly(2026, 11, 24), client.DiscoveryUntil);
 
+            client.FailDiscovery = true;
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            mode.SelectedIndex = (int)WorklogCalendarView.Month;
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);
+            mode.SelectedIndex = (int)WorklogCalendarView.Week;
+            Assert.Equal(new DateOnly(2026, 11, 24), client.DiscoveryUntil);
+            Assert.Equal(Visibility.Visible, ((TextBlock)calendar.FindName("LoadWarningText")).Visibility);
+            client.FailDiscovery = false;
+
             calendar.InvalidateWorklogs();
             mode.SelectedIndex = (int)WorklogCalendarView.Month;
             Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);

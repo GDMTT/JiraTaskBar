@@ -45,7 +45,8 @@ internal static class WorklogCalendarData
         {
             var preview = await DiscoverAsync(previousDay.AddDays(-2));
             previewIssues = preview.Issues;
-            var recent = await Task.WhenAll(Keys(previewIssues.Prepend(selected)).Select(key => LoadIssueAsync(key, split, end)));
+            var recent = await Task.WhenAll(Keys(issues.Append(selected).Concat(previewIssues))
+                .Select(key => LoadIssueAsync(key, split, end)));
             foreach (var load in recent.Where(load => load.Error is null)) previewLoads.Add(load.Key, load);
             ct.ThrowIfCancellationRequested();
             showPreview(BuildResult(recent, previewIssues, preview.Failed));

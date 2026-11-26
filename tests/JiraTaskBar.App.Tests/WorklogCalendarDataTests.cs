@@ -62,6 +62,21 @@ public class WorklogCalendarDataTests
     }
 
     [Fact]
+    public async Task Previews_known_tickets_when_discovery_fails()
+    {
+        var client = new CalendarClient { FailDiscovery = true };
+
+        await WorklogCalendarData.LoadAsync(client, [Issue("ABC-2"), Issue("abc-2")], Issue("ABC-1"),
+            CalendarRange, CancellationToken.None, showPreview: preview =>
+            {
+                Assert.True(preview.DiscoveryFailed);
+                Assert.Equal(["ABC-2", "ABC-1"], preview.Worklogs.Select(worklog => worklog.IssueKey));
+                Assert.Equal(["ABC-2", "ABC-1"], client.RequestedKeys);
+                Assert.All(client.RequestedBounds, request => Assert.NotNull(request.From));
+            });
+    }
+
+    [Fact]
     public async Task Shows_recent_worklogs_before_checking_older_overlaps()
     {
         var start = WorklogCalendarLayout.LocalDateTime(CalendarRange.Start, TimeOnly.MinValue, TimeZoneInfo.Local);
