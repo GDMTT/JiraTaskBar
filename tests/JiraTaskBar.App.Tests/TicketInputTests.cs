@@ -1,4 +1,6 @@
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Windows;
 using JiraTaskBar.App.Services;
@@ -38,7 +40,7 @@ public class TicketInputTests
     }
 
     [Fact]
-    public void Accepts_native_browser_url_and_text_payloads()
+    public void Accepts_browser_url_and_text_in_managed_data_objects()
     {
         const string url = "https://example.atlassian.net/browse/ABC-1";
         using var bytes = new MemoryStream(Encoding.Unicode.GetBytes(url + '\0'));
@@ -50,4 +52,62 @@ public class TicketInputTests
         Assert.Null(BarWindow.BrowserDropKey(new DataObject(DataFormats.Html, url), CloudSite));
         Assert.Null(BarWindow.BrowserDropKey(new DataObject(DataFormats.UnicodeText, url + "?" + new string('a', 2048)), CloudSite));
     }
+
+    [Theory]
+    [InlineData(DragDropEffects.Copy | DragDropEffects.Link, DragDropEffects.Copy)]
+    [InlineData(DragDropEffects.Link | DragDropEffects.Move, DragDropEffects.Link)]
+    [InlineData(DragDropEffects.Move, DragDropEffects.None)]
+    [InlineData(DragDropEffects.None, DragDropEffects.None)]
+    public void Negotiates_only_copy_or_link_for_ticket_drops(DragDropEffects allowed, DragDropEffects expected) =>
+        Assert.Equal(expected, BarWindow.ReadDropEffect(allowed));
+
+    [Fact]
+    public void Reads_browser_url_from_a_native_ole_data_object()
+    {
+        const string url = "https://example.atlassian.net/browse/ABC-1";
+        var interfaceId = typeof(System.Runtime.InteropServices.ComTypes.IDataObject).GUID;
+        Marshal.ThrowExceptionForHR(SHCreateDataObject(0, 0, 0, 0, in interfaceId, out var nativeData));
+        try
+        {
+            var format = new FORMATETC
+            {
+                cfFormat = unchecked((short)DataFormats.GetDataFormat("UniformResourceLocatorW").Id),
+                dwAspect = DVASPECT.DVASPECT_CONTENT,
+                lindex = -1,
+                tymed = TYMED.TYMED_HGLOBAL,
+            };
+            var bytes = Encoding.Unicode.GetBytes(url + '\0');
+            var payload = GlobalAlloc(2, (nuint)bytes.Length);
+            Assert.NotEqual(0, payload);
+            try
+            {
+                var address = GlobalLock(payload);
+                Assert.NotEqual(0, address);
+                try { Marshal.Copy(bytes, 0, address, bytes.Length); }
+                finally { GlobalUnlock(payload); }
+                var medium = new STGMEDIUM { tymed = TYMED.TYMED_HGLOBAL, unionmember = payload };
+                nativeData.SetData(ref format, ref medium, release: true);
+                payload = 0;
+                Assert.Equal("ABC-1", BarWindow.BrowserDropKey(new DataObject(nativeData), CloudSite));
+            }
+            finally { if (payload != 0) GlobalFree(payload); }
+        }
+        finally { Marshal.ReleaseComObject(nativeData); }
+    }
+
+    [DllImport("shell32.dll", ExactSpelling = true)]
+    private static extern int SHCreateDataObject(nint folder, uint count, nint children, nint inner,
+        in Guid interfaceId, [MarshalAs(UnmanagedType.Interface)] out System.Runtime.InteropServices.ComTypes.IDataObject data);
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern nint GlobalAlloc(uint flags, nuint bytes);
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern nint GlobalLock(nint global);
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern bool GlobalUnlock(nint global);
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern nint GlobalFree(nint global);
 }

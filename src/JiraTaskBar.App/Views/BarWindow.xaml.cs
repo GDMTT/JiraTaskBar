@@ -200,7 +200,7 @@ public partial class BarWindow : Window
         _app.HasDraggedQueueTicket && data.TryGetData<string>(QueueBrowserWindow.TicketDragFormat, autoConvert: false, out var key) &&
         _app.CanDropBrowserTicket(key) ? key : null;
 
-    private static DragDropEffects ReadDropEffect(DragDropEffects allowed) =>
+    internal static DragDropEffects ReadDropEffect(DragDropEffects allowed) =>
         (allowed & DragDropEffects.Copy) != 0 ? DragDropEffects.Copy : allowed & DragDropEffects.Link;
 
     internal static string? BrowserDropKey(IDataObject data, Uri site)
