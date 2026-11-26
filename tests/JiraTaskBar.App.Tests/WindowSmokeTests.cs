@@ -682,7 +682,27 @@ public class WindowSmokeTests
             Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
             Assert.Equal("Total: 16:05:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
 
-            ((ComboBox)calendar.FindName("ViewModeBox")).SelectedIndex = (int)WorklogCalendarView.Month;
+            var mode = (ComboBox)calendar.FindName("ViewModeBox");
+            mode.SelectedIndex = (int)WorklogCalendarView.Month;
+            Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);
+            mode.SelectedIndex = (int)WorklogCalendarView.Week;
+            Assert.Equal("Total: 16:05:00", ((TextBlock)calendar.FindName("RangeTotal")).Text);
+            Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal(new DateOnly(2026, 11, 24), client.DiscoveryUntil);
+
+            client.FailDiscovery = true;
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            mode.SelectedIndex = (int)WorklogCalendarView.Month;
+            Assert.True(calendar.RefreshAsync().GetAwaiter().GetResult());
+            Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);
+            mode.SelectedIndex = (int)WorklogCalendarView.Week;
+            Assert.Equal(new DateOnly(2026, 11, 24), client.DiscoveryUntil);
+            Assert.Equal(Visibility.Visible, ((TextBlock)calendar.FindName("LoadWarningText")).Visibility);
+            client.FailDiscovery = false;
+
+            calendar.InvalidateWorklogs();
+            mode.SelectedIndex = (int)WorklogCalendarView.Month;
             Assert.Equal(new DateOnly(2026, 12, 3), client.DiscoveryUntil);
             var scheduler = (Grid)calendar.FindName("SchedulerHost");
             var month = Assert.IsType<Grid>(Assert.Single(scheduler.Children.Cast<UIElement>()));
