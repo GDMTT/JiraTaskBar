@@ -18,8 +18,12 @@ public interface IJiraClient
     Task<IReadOnlyList<JiraIssueLookup>> FetchIssuesByKeyAsync(IReadOnlyList<string> keys,
         IReadOnlyList<JiraPriority> priorities, CancellationToken ct = default);
     Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until, CancellationToken ct = default);
+    Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until,
+        CancellationToken ct = default) => FindWorklogIssuesAsync(accountId, until, ct);
     Task<JiraSla?> GetRequestSlaAsync(string issueKey, CancellationToken ct = default);
     Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default);
+    Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, DateTimeOffset? startedFrom,
+        DateTimeOffset startedUntil, CancellationToken ct = default) => GetWorklogsAsync(issueKey, ct);
     Task AddWorklogAsync(string issueKey, DateTimeOffset startedLocal, int timeSpentSeconds, string? comment = null, CancellationToken ct = default);
     Task UpdateWorklogAsync(string issueKey, JiraWorklog worklog, DateTimeOffset startedLocal,
         int timeSpentSeconds, CancellationToken ct = default);
@@ -235,10 +239,18 @@ public sealed class JiraClient : IJiraClient
     }
 
     public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly until,
-        CancellationToken ct = default)
+        CancellationToken ct = default) => FindWorklogIssuesCoreAsync(accountId, null, until, ct);
+
+    public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until,
+        CancellationToken ct = default) => FindWorklogIssuesCoreAsync(accountId, from, until, ct);
+
+    private Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesCoreAsync(string accountId, DateOnly? from,
+        DateOnly until, CancellationToken ct)
     {
         var author = accountId.Replace("\\", "\\\\").Replace("\"", "\\\"");
         var jql = FormattableString.Invariant($"worklogAuthor = \"{author}\" AND worklogDate < \"{until:yyyy-MM-dd}\"");
+        if (from is { } lowerBound)
+            jql += FormattableString.Invariant($" AND worklogDate >= \"{lowerBound:yyyy-MM-dd}\"");
         return SearchIssuesAsync(jql, [], null, ct);
     }
 
@@ -394,7 +406,15 @@ public sealed class JiraClient : IJiraClient
 
     private static bool IsNumericId(string? id) => !string.IsNullOrEmpty(id) && id.All(char.IsAsciiDigit);
 
-    public async Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default)
+    public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default) =>
+        GetWorklogsCoreAsync(issueKey, null, null, ct);
+
+    public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, DateTimeOffset? startedFrom,
+        DateTimeOffset startedUntil, CancellationToken ct = default) =>
+        GetWorklogsCoreAsync(issueKey, startedFrom, startedUntil, ct);
+
+    private async Task<IReadOnlyList<JiraWorklog>> GetWorklogsCoreAsync(string issueKey, DateTimeOffset? startedFrom,
+        DateTimeOffset? startedUntil, CancellationToken ct)
     {
         var key = Uri.EscapeDataString(issueKey);
         var path = $"{ApiPath}/issue/{key}/worklog";
@@ -404,11 +424,18 @@ public sealed class JiraClient : IJiraClient
             return JiraPayloads.ParseWorklogs(response, issueKey, isDataCenter: true).Worklogs;
         }
 
+        // Include entries at the lower boundary even if Jira interprets startedAfter as exclusive.
+        // The calendar applies the exact half-open range locally.
+        var bounds = string.Empty;
+        if (startedFrom is { } from)
+            bounds += FormattableString.Invariant($"&startedAfter={from.ToUnixTimeMilliseconds() - 1}");
+        if (startedUntil is { } until)
+            bounds += FormattableString.Invariant($"&startedBefore={until.ToUnixTimeMilliseconds()}");
         var all = new List<JiraWorklog>();
         var startAt = 0;
         while (true)
         {
-            var node = await SendAsync(HttpMethod.Get, $"{path}?startAt={startAt}&maxResults=100", null, ct);
+            var node = await SendAsync(HttpMethod.Get, $"{path}?startAt={startAt}&maxResults=100{bounds}", null, ct);
             var page = JiraPayloads.ParseWorklogs(node, issueKey);
             all.AddRange(page.Worklogs);
             // Jira offsets count every response entry, including malformed entries we skip locally.

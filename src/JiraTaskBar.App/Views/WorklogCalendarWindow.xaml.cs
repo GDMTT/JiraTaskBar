@@ -37,6 +37,9 @@ public partial class WorklogCalendarWindow
     private Border? _currentTimeLine;
     private CancellationTokenSource? _load;
     private int _loadVersion;
+    private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(2);
+    private const int CachedRangeLimit = 24;
+    private readonly Dictionary<WorklogCalendarRange, (WorklogCalendarLoadResult Result, DateTimeOffset LoadedAt)> _rangeCache = [];
     private bool _isClosed;
     private DateOnly _anchor = DateOnly.FromDateTime(DateTime.Today);
     private WorklogCalendarView _view = WorklogCalendarView.Week;
@@ -136,12 +139,17 @@ public partial class WorklogCalendarWindow
     }
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
 
-    public async Task<bool> RefreshAsync()
+    public Task<bool> RefreshAsync() => LoadRangeAsync();
+
+    internal void InvalidateWorklogs() => _rangeCache.Clear();
+
+    private async Task<bool> LoadRangeAsync(bool navigating = false)
     {
         if (_isClosed) return false;
         if (_calendarEdit is not null || _savingEdit)
         {
             _refreshPending = true;
+            if (navigating) RenderScheduler(resetScroll: true);
             return false;
         }
         _refreshPending = false;
@@ -149,28 +157,52 @@ public partial class WorklogCalendarWindow
         var selectedIssue = _issue;
         var range = CurrentRange();
         _load?.Cancel();
+        _load = null;
+        var hasCachedRange = _rangeCache.TryGetValue(range, out var cached);
+        if (hasCachedRange)
+        {
+            ApplyWorklogs(cached.Result);
+            if (navigating && DateTimeOffset.UtcNow - cached.LoadedAt < CacheLifetime &&
+                _issues().Select(issue => issue.Key).Append(selectedIssue.Key).Concat(_localIssueKeys)
+                    .All(key => cached.Result.IssueKeys.Contains(key, StringComparer.OrdinalIgnoreCase)))
+            {
+                ReportLoaded(cached.Result);
+                RefreshButton.IsEnabled = true;
+                RenderScheduler(resetScroll: true);
+                return true;
+            }
+            SetLoadWarning("Showing cached worklogs while Jira is checked.");
+        }
+        else if (navigating)
+        {
+            _worklogs = [];
+            _worklogIssues = [];
+            SetLoadWarning(string.Empty);
+        }
+        if (navigating) RenderScheduler(resetScroll: true);
+
         var load = CancellationTokenSource.CreateLinkedTokenSource(_closed.Token);
         _load = load;
         RefreshButton.IsEnabled = false;
-        StatusText.Text = "Loading your Jira worklogs…";
+        StatusText.Text = hasCachedRange ? "Refreshing your Jira worklogs…" : "Loading your Jira worklogs…";
         try
         {
             var result = await WorklogCalendarData.LoadAsync(_client, _issues(), selectedIssue, range,
-                load.Token, _localIssueKeys);
-            if (version != _loadVersion || range != CurrentRange() ||
-                !_issue.Key.Equals(selectedIssue.Key, StringComparison.OrdinalIgnoreCase))
-                return false;
+                load.Token, _localIssueKeys, hasCachedRange ? null : ShowPreview);
+            if (!IsCurrent()) return false;
             if (_calendarEdit is not null || _savingEdit)
             {
                 _refreshPending = true;
                 return false;
             }
-            _worklogs = result.Worklogs;
-            _worklogIssues = result.DiscoveredIssues;
-            _accountId = result.AccountId;
-            StatusText.Text = $"Loaded your Jira worklogs from {result.IssueKeys.Count - result.FailedIssueCount} ticket(s).";
-            SetLoadWarning((result.DiscoveryFailed ? "Jira search failed. Only known tickets were checked. " : string.Empty) +
-                (result.FailedIssueCount == 0 ? string.Empty : $"{result.FailedIssueCount} ticket(s) could not be loaded."));
+            if (!result.DiscoveryFailed && result.FailedIssueCount == 0)
+            {
+                _rangeCache[range] = (result, DateTimeOffset.UtcNow);
+                if (_rangeCache.Count > CachedRangeLimit)
+                    _rangeCache.Remove(_rangeCache.MinBy(entry => entry.Value.LoadedAt).Key);
+            }
+            ApplyWorklogs(result);
+            ReportLoaded(result);
             RenderScheduler();
             return true;
         }
@@ -196,6 +228,32 @@ public partial class WorklogCalendarWindow
             }
             load.Dispose();
         }
+
+        bool IsCurrent() => version == _loadVersion && range == CurrentRange() &&
+            _issue.Key.Equals(selectedIssue.Key, StringComparison.OrdinalIgnoreCase) && !load.IsCancellationRequested;
+
+        void ShowPreview(WorklogCalendarLoadResult preview)
+        {
+            if (!IsCurrent() || _calendarEdit is not null || _savingEdit || preview.Worklogs.Count == 0) return;
+            ApplyWorklogs(preview);
+            StatusText.Text = "Checking for older worklogs that overlap this range…";
+            SetLoadWarning("Calendar totals may change while older worklogs are checked.");
+            RenderScheduler();
+        }
+    }
+
+    private void ApplyWorklogs(WorklogCalendarLoadResult result)
+    {
+        _worklogs = result.Worklogs;
+        _worklogIssues = result.DiscoveredIssues;
+        _accountId = result.AccountId;
+    }
+
+    private void ReportLoaded(WorklogCalendarLoadResult result)
+    {
+        StatusText.Text = $"Loaded your Jira worklogs from {result.IssueKeys.Count - result.FailedIssueCount} ticket(s).";
+        SetLoadWarning((result.DiscoveryFailed ? "Jira search did not finish. Some tickets may be missing. " : string.Empty) +
+            (result.FailedIssueCount == 0 ? string.Empty : $"Worklogs from {result.FailedIssueCount} ticket(s) may be incomplete."));
     }
 
     private void SetLoadWarning(string warning)
@@ -235,8 +293,8 @@ public partial class WorklogCalendarWindow
 
     private async Task ShowRangeAsync()
     {
-        RenderScheduler(resetScroll: true);
-        if (IsLoaded) await RefreshAsync();
+        if (IsLoaded) await LoadRangeAsync(navigating: true);
+        else RenderScheduler(resetScroll: true);
     }
 
     private void MoveToVisibleDay(int direction)
@@ -903,6 +961,7 @@ public partial class WorklogCalendarWindow
                 current.TimeSpentSeconds != entry.Seconds || !string.Equals(current.Comment ?? string.Empty,
                     entry.Comment, StringComparison.Ordinal))
             {
+                InvalidateWorklogs();
                 _worklogs = WorklogCalendarData.ReplaceIssueWorklogs(_worklogs, issueKey,
                     WorklogCalendarData.ForAccount(latest, _accountId));
                 StatusText.Text = "This worklog changed in Jira. The calendar was refreshed without overwriting it.";
@@ -912,6 +971,7 @@ public partial class WorklogCalendarWindow
 
             StatusText.Text = "Saving the changed worklog to Jira…";
             await _client.UpdateWorklogAsync(issueKey, current, started, seconds, _closed.Token);
+            InvalidateWorklogs();
             var updated = current with { Started = started, TimeSpentSeconds = seconds };
             var updatedIssue = latest.Select(worklog => worklog.Id == updated.Id ? updated : worklog).ToList();
             _worklogs = WorklogCalendarData.ReplaceIssueWorklogs(_worklogs, issueKey,
@@ -1053,6 +1113,7 @@ public partial class WorklogCalendarWindow
         };
         dialog.ShowDialog();
         if (!dialog.WorklogSaved || dialog.SavedIssue is not { } saved) return;
+        InvalidateWorklogs();
         if (!_issue.Key.Equals(saved.Key, StringComparison.OrdinalIgnoreCase))
             FocusIssue(saved);
         else
@@ -1076,7 +1137,11 @@ public partial class WorklogCalendarWindow
         }
         finally { _savingEdit = false; }
         StatusText.Text = $"{_worklogs.Count} Jira worklog(s) loaded";
-        if (saved) await RefreshAsync();
+        if (saved)
+        {
+            InvalidateWorklogs();
+            await RefreshAsync();
+        }
     }
 
     private string EntryTooltip(CalendarEntry entry) =>

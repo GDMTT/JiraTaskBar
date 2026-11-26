@@ -62,6 +62,39 @@ public class WorklogCalendarDataTests
     }
 
     [Fact]
+    public async Task Shows_recent_worklogs_before_checking_older_overlaps()
+    {
+        var start = WorklogCalendarLayout.LocalDateTime(CalendarRange.Start, TimeOnly.MinValue, TimeZoneInfo.Local);
+        var end = WorklogCalendarLayout.LocalDateTime(CalendarRange.EndExclusive, TimeOnly.MinValue, TimeZoneInfo.Local);
+        var split = WorklogCalendarLayout.LocalDateTime(CalendarRange.Start.AddDays(-1), TimeOnly.MinValue, TimeZoneInfo.Local);
+        var client = new CalendarClient
+        {
+            Worklogs =
+            [
+                Log("old-overlap", split.AddHours(-1), 3 * 24 * 3600),
+                Log("ends-at-start", start.AddHours(-2), 2 * 3600),
+                Log("at-split", split, 2 * 24 * 3600),
+                Log("overnight", start.AddMinutes(-30), 3600),
+                Log("at-end", end, 600),
+            ],
+        };
+
+        var result = await WorklogCalendarData.LoadAsync(client, [], Issue("ABC-1"), CalendarRange,
+            CancellationToken.None, showPreview: preview =>
+            {
+                Assert.Equal(["at-split", "overnight"], preview.Worklogs.Select(worklog => worklog.Id));
+                Assert.Single(client.RequestedKeys);
+                Assert.Equal(CalendarRange.Start.AddDays(-3), client.PreviewFrom);
+            });
+
+        Assert.Equal(["old-overlap", "at-split", "overnight"], result.Worklogs.Select(worklog => worklog.Id));
+        Assert.Equal([(split, end), ((DateTimeOffset?)null, split)], client.RequestedBounds);
+
+        static JiraWorklog Log(string id, DateTimeOffset started, int seconds) =>
+            new(id, "ABC-1", started, seconds, "Me", null) { AuthorAccountId = "my-account" };
+    }
+
+    [Fact]
     public void Replacing_one_tickets_history_keeps_other_ticket_worklogs()
     {
         var started = DateTimeOffset.Now;
@@ -84,17 +117,30 @@ public class WorklogCalendarDataTests
         public string? FailingKey { get; init; }
         public bool FailDiscovery { get; init; }
         public IReadOnlyList<JiraIssue> Discovered { get; init; } = [];
+        public IReadOnlyList<JiraWorklog>? Worklogs { get; init; }
         public (string AccountId, DateOnly Until)? DiscoveryQuery { get; private set; }
+        public DateOnly? PreviewFrom { get; private set; }
+        public List<(DateTimeOffset? From, DateTimeOffset Until)> RequestedBounds { get; } = [];
 
         public Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, CancellationToken ct = default)
         {
             RequestedKeys.Add(issueKey);
             if (issueKey.Equals(FailingKey, StringComparison.OrdinalIgnoreCase))
                 throw new HttpRequestException("temporary failure");
-            IReadOnlyList<JiraWorklog> worklogs =
-                [new(issueKey + "-worklog", issueKey, DateTimeOffset.Now, 600, "Me", null) { AuthorAccountId = "my-account" },
-                 new(issueKey + "-other", issueKey, DateTimeOffset.Now, 1200, "Me", null) { AuthorAccountId = "another-account" }];
+            var started = WorklogCalendarLayout.LocalDateTime(CalendarRange.Start, new TimeOnly(12, 0), TimeZoneInfo.Local);
+            IReadOnlyList<JiraWorklog> worklogs = Worklogs ??
+                [new(issueKey + "-worklog", issueKey, started, 600, "Me", null) { AuthorAccountId = "my-account" },
+                 new(issueKey + "-other", issueKey, started, 1200, "Me", null) { AuthorAccountId = "another-account" }];
             return Task.FromResult(worklogs);
+        }
+
+        public async Task<IReadOnlyList<JiraWorklog>> GetWorklogsAsync(string issueKey, DateTimeOffset? startedFrom,
+            DateTimeOffset startedUntil, CancellationToken ct = default)
+        {
+            RequestedBounds.Add((startedFrom, startedUntil));
+            var worklogs = await GetWorklogsAsync(issueKey, ct);
+            return worklogs.Where(worklog => (startedFrom is null || worklog.Started >= startedFrom) &&
+                worklog.Started <= startedUntil).ToArray();
         }
 
         public Task<JiraUser> GetMyselfAsync(CancellationToken ct = default) => Task.FromResult(new JiraUser("my-account", "Me", null));
@@ -102,6 +148,12 @@ public class WorklogCalendarDataTests
         {
             DiscoveryQuery = (accountId, until);
             return FailDiscovery ? throw new HttpRequestException("search unavailable") : Task.FromResult(Discovered);
+        }
+        public Task<IReadOnlyList<JiraIssue>> FindWorklogIssuesAsync(string accountId, DateOnly from, DateOnly until,
+            CancellationToken ct = default)
+        {
+            PreviewFrom = from;
+            return FindWorklogIssuesAsync(accountId, until, ct);
         }
         public Task<JiraDurationSettings> GetTimeTrackingConfigurationAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<JiraPriority>> GetPrioritiesAsync(CancellationToken ct = default) => throw new NotSupportedException();
