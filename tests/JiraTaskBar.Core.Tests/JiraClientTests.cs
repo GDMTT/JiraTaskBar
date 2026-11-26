@@ -152,6 +152,25 @@ public class JiraClientTests
     }
 
     [Fact]
+    public async Task Worklog_preview_sends_date_bounds_to_jira()
+    {
+        var (client, handler) = Create();
+        handler.Respond("""{"issues":[],"isLast":true}""");
+        handler.Respond("""{"total":0,"worklogs":[]}""");
+        var from = new DateTimeOffset(2026, 11, 14, 0, 0, 0, TimeSpan.FromHours(13));
+        var until = from.AddDays(8);
+
+        await client.FindWorklogIssuesAsync("site:account", new DateOnly(2026, 11, 12), new DateOnly(2026, 11, 24));
+        await client.GetWorklogsAsync("ABC-1", from, until);
+
+        var jql = Uri.UnescapeDataString(handler.Requests[0].PathAndQuery);
+        Assert.Contains("worklogDate >= \"2026-11-12\"", jql);
+        Assert.Contains("worklogDate < \"2026-11-24\"", jql);
+        Assert.EndsWith($"&startedAfter={from.ToUnixTimeMilliseconds() - 1}&startedBefore={until.ToUnixTimeMilliseconds()}",
+            handler.Requests[1].PathAndQuery);
+    }
+
+    [Fact]
     public async Task Request_sla_keeps_the_latest_completed_cycle_ahead_of_the_due_date()
     {
         var (client, handler) = Create();

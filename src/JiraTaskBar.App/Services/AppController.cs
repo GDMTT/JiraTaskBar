@@ -419,7 +419,10 @@ public sealed class AppController : IDisposable
         }
 
         if (_worklogWindow is { } window)
+        {
+            window.InvalidateWorklogs();
             _ = window.RefreshAsync();
+        }
     }
 
     private void RefreshPendingWorklogState()
